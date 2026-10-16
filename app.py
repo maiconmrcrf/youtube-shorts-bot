@@ -1,5 +1,6 @@
 """
-app.py — Chat com 2 IAs + geração de vídeo pelo GEMINI (omni).
+app.py — Chat com 2 IAs + ferramentas em ROTAÇÃO.
+Cada video usa uma ferramenta diferente (Magic Hour -> Replicate -> HuggingFace -> volta).
 """
 import base64
 import json
@@ -17,128 +18,174 @@ GEMINI_KEY     = os.environ.get("GEMINI_KEY_IA", "").strip() or os.environ.get("
 GROQ_KEY       = os.environ.get("GROQ_API_KEY", "").strip()
 CF_ACCOUNT     = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
 CF_TOKEN       = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
+HF_TOKEN       = os.environ.get("HUGGINGFACE_TOKEN", "").strip()
+MH_KEY         = os.environ.get("MAGIC_HOUR_API_KEY", "").strip()
+REPLICATE_KEY  = os.environ.get("REPLICATE_API_TOKEN", "").strip()
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
 
 HISTORICO = []
 IA_ATIVA = "gemini"
 
+# Rotação de ferramentas
+ROTACAO = ["magichour", "replicate", "huggingface"]
+INDICE_ROTACAO = 0
+
 MIDIA = Path(__file__).parent / "midia"
 MIDIA.mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================
-# IMAGEM (Gemini 3.1 flash image ou Cloudflare)
+# IMAGEM (Cloudflare FLUX)
 # ============================================================
 def ferramenta_imagem(prompt):
-    # Tenta Gemini image primeiro
-    if GEMINI_KEY:
-        modelos_img = ["gemini-3.1-flash-image", "gemini-3-pro-image", "gemini-2.5-flash-image"]
-        for modelo in modelos_img:
-            try:
-                url = "https://generativelanguage.googleapis.com/v1beta/models/" + modelo + ":generateContent?key=" + GEMINI_KEY
-                body = {"contents": [{"role": "user", "parts": [{"text": "Gere uma imagem: " + prompt}]}]}
-                req = urllib.request.Request(url, data=json.dumps(body).encode(),
-                    headers={"Content-Type": "application/json"}, method="POST")
-                with urllib.request.urlopen(req, timeout=90) as r:
-                    d = json.loads(r.read().decode())
-                # Procura partes com inline_data (imagem)
-                for p in d["candidates"][0]["content"]["parts"]:
-                    if "inline_data" in p:
-                        img_bytes = base64.b64decode(p["inline_data"]["data"])
-                        nome = "img_" + uuid.uuid4().hex[:8] + ".jpg"
-                        (MIDIA / nome).write_bytes(img_bytes)
-                        return nome, None
-            except Exception:
-                continue
-
-    # Fallback Cloudflare
-    if CF_ACCOUNT and CF_TOKEN:
-        url = "https://api.cloudflare.com/client/v4/accounts/" + CF_ACCOUNT + "/ai/run/@cf/black-forest-labs/flux-1-schnell"
-        body = json.dumps({"prompt": prompt, "steps": 4}).encode()
-        req = urllib.request.Request(url, data=body,
-            headers={"Authorization": "Bearer " + CF_TOKEN, "Content-Type": "application/json"}, method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=90) as r:
-                d = json.loads(r.read().decode())
-            if d.get("success"):
-                img_bytes = base64.b64decode(d["result"]["image"])
-                nome = "img_" + uuid.uuid4().hex[:8] + ".jpg"
-                (MIDIA / nome).write_bytes(img_bytes)
-                return nome, None
-        except Exception:
-            pass
-
-    return None, "Todas as APIs de imagem falharam"
+    if not CF_ACCOUNT or not CF_TOKEN:
+        return None, "Cloudflare nao configurado"
+    url = "https://api.cloudflare.com/client/v4/accounts/" + CF_ACCOUNT + "/ai/run/@cf/black-forest-labs/flux-1-schnell"
+    body = json.dumps({"prompt": prompt, "steps": 4}).encode()
+    req = urllib.request.Request(url, data=body,
+        headers={"Authorization": "Bearer " + CF_TOKEN, "Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=90) as r:
+            d = json.loads(r.read().decode())
+        if not d.get("success"):
+            return None, "FLUX falhou"
+        img_bytes = base64.b64decode(d["result"]["image"])
+        nome = "img_" + uuid.uuid4().hex[:8] + ".jpg"
+        (MIDIA / nome).write_bytes(img_bytes)
+        return nome, None
+    except Exception as e:
+        return None, str(e)[:80]
 
 
 # ============================================================
-# VIDEO (Gemini omni - GRATIS e sem limite pratico)
+# VIDEO - Magic Hour
 # ============================================================
-def ferramenta_video_gemini(prompt, duracao=5):
-    """Gera video com o Gemini Omni."""
-    if not GEMINI_KEY:
+def video_magichour(prompt, duracao=5):
+    if not MH_KEY:
         return None, "sem chave"
-
-    # Modelos de video do Gemini
-    modelos = ["gemini-omni-1.1-flash", "gemini-omni-flash-preview"]
-
-    for modelo in modelos:
-        try:
-            url = "https://generativelanguage.googleapis.com/v1beta/models/" + modelo + ":generateContent?key=" + GEMINI_KEY
-            body = {
-                "contents": [{"role": "user", "parts": [{
-                    "text": "Gere um video de " + str(duracao) + " segundos: " + prompt + ". Formato vertical 9:16."
-                }]}],
-                "generationConfig": {
-                    "responseModalities": ["VIDEO"]
-                }
-            }
-            req = urllib.request.Request(url, data=json.dumps(body).encode(),
-                headers={"Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=180) as r:
-                d = json.loads(r.read().decode())
-
-            # Procura por video na resposta
-            candidatos = d.get("candidates", [])
-            if not candidatos:
-                continue
-
-            for p in candidatos[0].get("content", {}).get("parts", []):
-                # Formato 1: inline_data com video
-                if "inline_data" in p and "video" in p["inline_data"].get("mime_type", ""):
-                    vid_bytes = base64.b64decode(p["inline_data"]["data"])
-                    nome = "vid_gem_" + uuid.uuid4().hex[:8] + ".mp4"
-                    (MIDIA / nome).write_bytes(vid_bytes)
+    url = "https://api.magichour.ai/v1/text-to-video"
+    body = json.dumps({
+        "end_seconds": duracao, "aspect_ratio": "9:16", "resolution": "480p",
+        "model": "ltx-2.5", "style": {"prompt": prompt}
+    }).encode()
+    try:
+        req = urllib.request.Request(url, data=body,
+            headers={"Authorization": "Bearer " + MH_KEY, "Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=60) as r:
+            d = json.loads(r.read().decode())
+        job_id = d.get("id")
+        if not job_id:
+            return None, "sem id"
+        for _ in range(36):
+            time.sleep(5)
+            req2 = urllib.request.Request("https://api.magichour.ai/v1/video-projects/" + job_id,
+                headers={"Authorization": "Bearer " + MH_KEY}, method="GET")
+            with urllib.request.urlopen(req2, timeout=30) as r2:
+                s = json.loads(r2.read().decode())
+            if s.get("status") == "complete":
+                url_vid = s.get("download", {}).get("url")
+                if url_vid:
+                    nome = "vid_mh_" + uuid.uuid4().hex[:8] + ".mp4"
+                    urllib.request.urlretrieve(url_vid, MIDIA / nome)
                     return nome, None
+                return None, "sem url"
+            elif s.get("status") in ("error", "failed"):
+                return None, "falhou"
+        return None, "timeout"
+    except Exception as e:
+        return None, str(e)[:80]
 
-                # Formato 2: file_data com URL
-                if "file_data" in p:
-                    url_vid = p["file_data"].get("file_uri") or p["file_data"].get("url")
-                    if url_vid:
-                        nome = "vid_gem_" + uuid.uuid4().hex[:8] + ".mp4"
-                        urllib.request.urlretrieve(url_vid, MIDIA / nome)
-                        return nome, None
-        except Exception as e:
-            print("[gemini video] " + modelo + " falhou: " + str(e)[:100])
+
+# ============================================================
+# VIDEO - Replicate
+# ============================================================
+def video_replicate(prompt, duracao=5):
+    if not REPLICATE_KEY:
+        return None, "sem chave"
+    url = "https://api.replicate.com/v1/predictions"
+    body = json.dumps({
+        "version": "9f747673945c62801b13b84701c783929c0ee784e4748ec062204894dda1a351",
+        "input": {"prompt": prompt}
+    }).encode()
+    try:
+        req = urllib.request.Request(url, data=body,
+            headers={"Authorization": "Token " + REPLICATE_KEY, "Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=60) as r:
+            d = json.loads(r.read().decode())
+        pred_id = d.get("id")
+        if not pred_id:
+            return None, "sem id"
+        for _ in range(36):
+            time.sleep(5)
+            req2 = urllib.request.Request("https://api.replicate.com/v1/predictions/" + pred_id,
+                headers={"Authorization": "Token " + REPLICATE_KEY}, method="GET")
+            with urllib.request.urlopen(req2, timeout=30) as r2:
+                s = json.loads(r2.read().decode())
+            if s.get("status") == "succeeded":
+                output = s.get("output")
+                url_vid = output if isinstance(output, str) else (output[0] if output else None)
+                if url_vid:
+                    nome = "vid_rep_" + uuid.uuid4().hex[:8] + ".mp4"
+                    urllib.request.urlretrieve(url_vid, MIDIA / nome)
+                    return nome, None
+                return None, "sem url"
+            elif s.get("status") == "failed":
+                return None, "falhou"
+        return None, "timeout"
+    except Exception as e:
+        return None, str(e)[:80]
+
+
+# ============================================================
+# VIDEO - Hugging Face
+# ============================================================
+def video_huggingface(prompt, duracao=5):
+    if not HF_TOKEN:
+        return None, "sem chave"
+    return None, "nao implementado"
+
+
+FERRAMENTAS_VIDEO = {
+    "magichour": video_magichour,
+    "replicate": video_replicate,
+    "huggingface": video_huggingface,
+}
+
+
+def proxima_ferramenta():
+    global INDICE_ROTACAO
+    for _ in range(3):
+        ferramenta = ROTACAO[INDICE_ROTACAO]
+        INDICE_ROTACAO = (INDICE_ROTACAO + 1) % len(ROTACAO)
+        if ferramenta == "magichour" and MH_KEY:
+            return ferramenta
+        if ferramenta == "replicate" and REPLICATE_KEY:
+            return ferramenta
+        if ferramenta == "huggingface" and HF_TOKEN:
+            return ferramenta
+    return None
+
+
+def gerar_video_rotacao(prompt, duracao=5):
+    tentativas = 0
+    while tentativas < len(ROTACAO):
+        nome_ferramenta = proxima_ferramenta()
+        if not nome_ferramenta:
+            tentativas += 1
             continue
-
-    return None, "Gemini Omni nao retornou video"
-
-
-# ============================================================
-# GERAR VIDEO
-# ============================================================
-def gerar_video(prompt, duracao=5):
-    print("[video] tentando Gemini Omni...")
-    res, err = ferramenta_video_gemini(prompt, duracao)
-    if res:
-        return res, None, "Gemini Omni"
-    return None, "Gemini Omni falhou: " + str(err), None
+        func = FERRAMENTAS_VIDEO[nome_ferramenta]
+        print("[video] tentando " + nome_ferramenta)
+        res, err = func(prompt, duracao)
+        if res:
+            return res, None, nome_ferramenta
+        print("[video] " + nome_ferramenta + " falhou: " + str(err))
+        tentativas += 1
+    return None, "Todas as ferramentas falharam", None
 
 
 # ============================================================
-# IA (texto)
+# IA
 # ============================================================
 def chamar_gemini(prompt_ia):
     if not GEMINI_KEY:
@@ -198,14 +245,14 @@ def ia_interpretar_pedido(msg, ia):
     prompt = (
         "Voce decide quando usar ferramentas.\n\n"
         "FERRAMENTAS:\n"
-        "- IMAGEM: gera imagens estaticas\n"
-        "- VIDEO: gera videos com movimento (Gemini Omni)\n"
+        "- IMAGEM: gera imagens estaticas (Cloudflare)\n"
+        "- VIDEO: gera videos de 3-6 segundos (Magic Hour, Replicate)\n"
         "- CONVERSA: so texto\n\n"
         "Responda APENAS com JSON:\n"
         '{"acao":"imagem|video|conversa","prompt":"prompt em ingles detalhado","duracao":5,"comentario":"mensagem em PT"}\n\n'
         "Exemplos:\n"
         'Usuario: "cria um video de gato correndo"\n'
-        '{"acao":"video","prompt":"a cute cat running fast on green grass, dynamic action, cinematic","duracao":5,"comentario":"Vou criar um video do gatinho correndo!"}\n\n'
+        '{"acao":"video","prompt":"a cute cat running on green grass, cinematic action","duracao":5,"comentario":"Vou criar um video do gatinho correndo!"}\n\n'
         'Usuario: "faz uma imagem de por do sol"\n'
         '{"acao":"imagem","prompt":"beautiful sunset over mountains, cinematic","duracao":0,"comentario":"Vou gerar uma imagem!"}\n\n'
         'Usuario: "oi tudo bem"\n'
@@ -260,7 +307,7 @@ def chat():
         return jsonify({"ok": True, "resposta": resp, "ia": ia.capitalize(), "tipo": "imagem", "midia": item["midia"]})
 
     if acao == "video":
-        nome, err, ferramenta = gerar_video(prompt_f, duracao)
+        nome, err, ferramenta = gerar_video_rotacao(prompt_f, duracao)
         resp = (comentario + " Video gerado com " + (ferramenta or "?")) if not err else ("Erro: " + err)
         item = {"user": msg, "ia": resp, "quem": ia.capitalize(), "tipo": "video", "midia": nome if not err else None}
         HISTORICO.append(item)
