@@ -87,7 +87,18 @@ def rodar_criar(url_baixo, job_id):
         proc.wait()
 
         # Le o publicacao.json
-        pub = MODULOS / "publicacao.json"
+        # Procura publicacao.json em VÁRIOS lugares
+        candidatos = [
+            MODULOS / "publicacao.json",
+            BASE / "publicacao.json",
+            Path("/tmp/publicacao.json"),
+        ]
+        pub = None
+        for c in candidatos:
+            if c.exists():
+                pub = c
+                print(f"[app] publicacao.json encontrado em: {c}")
+                break
         if pub.exists():
             dados = json.loads(pub.read_text(encoding="utf-8"))
             JOBS[job_id]["status"] = "concluido"
