@@ -214,3 +214,22 @@ html, body {
     background: rgba(64, 224, 208, 0.3);
     transform: scale(1.05);
 }
+
+/* Botão de anexar */
+.btn-anexar {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    font-size: 1.3rem;
+    cursor: pointer;
+    transition: all 0.3s;
+    flex-shrink: 0;
+}
+
+.btn-anexar:hover {
+    background: rgba(64, 224, 208, 0.3);
+    transform: scale(1.05);
+}
