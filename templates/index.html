@@ -16,26 +16,7 @@
         <section class="card">
             <label for="url_baixo">🔽 Link do vídeo de reação</label>
             <input type="url" id="url_baixo" placeholder="https://www.instagram.com/reel/..." autocomplete="off">
-
-            <div class="opcoes">
-                <label class="radio">
-                    <input type="radio" name="modo" value="agora" checked>
-                    <span>🚀 Postar agora</span>
-                </label>
-                <label class="radio">
-                    <input type="radio" name="modo" value="agendar">
-                    <span>📅 Agendar</span>
-                </label>
-            </div>
-
-            <div id="agendamento" class="agendamento escondido">
-                <label>Data e hora:</label>
-                <input type="datetime-local" id="data_agendamento">
-            </div>
-
-            <button id="btn-criar" onclick="criarVideo()">
-                ✨ CRIAR VÍDEO
-            </button>
+            <button id="btn-criar" onclick="criarVideo()">✨ CRIAR VÍDEO</button>
         </section>
 
         <section id="progresso" class="card escondido">
@@ -47,28 +28,54 @@
         </section>
 
         <section id="resultado" class="card escondido">
-            <h2>✅ Pronto!</h2>
-            <p><strong>Título:</strong> <span id="res-titulo"></span></p>
-            <p><strong>Frase:</strong> <span id="res-frase"></span></p>
-            <p><strong>Vídeo:</strong> <span id="res-video"></span></p>
+            <h2>✅ Vídeo Pronto!</h2>
+
+            <div class="campo">
+                <strong>🎬 Título:</strong>
+                <p id="res-titulo"></p>
+            </div>
+
+            <div class="campo">
+                <strong>📝 Descrição:</strong>
+                <p id="res-descricao"></p>
+            </div>
+
+            <div class="campo">
+                <strong>🏷️ Tags:</strong>
+                <p id="res-tags" class="tags"></p>
+            </div>
+
+            <div class="campo">
+                <strong>#️⃣ Hashtags:</strong>
+                <p id="res-hashtags" class="hashtags"></p>
+            </div>
+
+            <div class="campo">
+                <strong>💬 Frase curta:</strong>
+                <p id="res-frase"></p>
+            </div>
+
+            <div class="campo">
+                <strong>🎥 Vídeo:</strong>
+                <video id="res-video" controls width="100%" style="border-radius: 10px; margin-top: 8px;"></video>
+            </div>
+
+            <div id="acoes" class="acoes">
+                <button class="btn-postar" onclick="postarVideo()">✅ SIM, POSTAR AGORA</button>
+                <button class="btn-cancelar" onclick="naoPostar()">❌ NÃO</button>
+            </div>
+
+            <div id="agendamento-box" class="agendamento-box escondido">
+                <h3>⏰ Limite atingido. Escolha quando postar:</h3>
+                <input type="datetime-local" id="data_agendamento">
+                <button class="btn-agendar" onclick="agendarVideo()">📅 AGENDAR</button>
+            </div>
         </section>
 
         <section class="card">
             <h2>📋 Últimos vídeos</h2>
             <div id="historico-lista">
-                {% if historico %}
-                    {% for item in historico %}
-                    <div class="item-historico">
-                        <span class="status-dot concluido"></span>
-                        <div>
-                            <strong>{{ item.titulo }}</strong>
-                            <small>{{ item.data[:16] }}</small>
-                        </div>
-                    </div>
-                    {% endfor %}
-                {% else %}
-                    <p class="vazio">Nenhum vídeo criado ainda.</p>
-                {% endif %}
+                <p class="vazio">Nenhum vídeo criado ainda.</p>
             </div>
         </section>
     </div>

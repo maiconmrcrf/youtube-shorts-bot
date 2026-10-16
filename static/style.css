@@ -214,3 +214,112 @@ button:disabled {
 #resultado strong {
     color: #40e0d0;
 }
+
+/* Resultado */
+.campo {
+    margin-bottom: 16px;
+    padding: 12px;
+    background: rgba(0,0,0,0.2);
+    border-radius: 10px;
+}
+.campo strong {
+    display: block;
+    color: #40e0d0;
+    margin-bottom: 6px;
+    font-size: 0.9rem;
+}
+.campo p {
+    color: #fff;
+    font-size: 0.95rem;
+    line-height: 1.4;
+    word-break: break-word;
+}
+.tags, .hashtags {
+    color: #ff8c00 !important;
+    font-size: 0.85rem !important;
+}
+.acoes {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+}
+.btn-postar {
+    background: linear-gradient(90deg, #00b894, #00cec9);
+    flex: 1;
+}
+.btn-cancelar {
+    background: linear-gradient(90deg, #636e72, #2d3436);
+    flex: 1;
+}
+.btn-agendar {
+    background: linear-gradient(90deg, #6c5ce7, #a29bfe);
+    width: 100%;
+    margin-top: 10px;
+}
+.agendamento-box {
+    margin-top: 20px;
+    padding: 16px;
+    background: rgba(108, 92, 231, 0.15);
+    border-radius: 12px;
+    border: 1px solid rgba(108, 92, 231, 0.5);
+}
+.agendamento-box h3 {
+    font-size: 0.95rem;
+    color: #a29bfe;
+    margin-bottom: 12px;
+}
+
+/* Histórico */
+.item-historico {
+    padding: 16px;
+    background: rgba(0,0,0,0.3);
+    border-radius: 12px;
+    margin-bottom: 12px;
+    border-left: 3px solid #40e0d0;
+}
+.item-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+.item-header strong {
+    flex: 1;
+    font-size: 0.95rem;
+    color: #fff;
+}
+.item-header small {
+    color: #666;
+    font-size: 0.75rem;
+}
+.item-desc {
+    font-size: 0.85rem;
+    color: #ccc;
+    margin-bottom: 8px;
+}
+.item-tags {
+    font-size: 0.75rem;
+    color: #ff8c00;
+    margin-bottom: 4px;
+}
+.item-hashtags {
+    font-size: 0.75rem;
+    color: #40e0d0;
+    margin-bottom: 8px;
+}
+.item-frase {
+    font-size: 0.85rem;
+    color: #ff0080;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+.item-status {
+    display: inline-block;
+    font-size: 0.7rem;
+    padding: 3px 10px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.1);
+    color: #aaa;
+    text-transform: uppercase;
+}
