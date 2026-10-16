@@ -1,11 +1,10 @@
 """
-app.py — Chat com 2 IAs + ferramentas (Replicate + Cloudflare).
+app.py — Chat com 2 IAs + ferramentas (Pollinations Video + Cloudflare).
 """
 import base64
 import json
 import os
 import re
-import subprocess
 import time
 import urllib.request
 import uuid
@@ -18,7 +17,7 @@ GEMINI_KEY     = os.environ.get("GEMINI_KEY_IA", "").strip() or os.environ.get("
 GROQ_KEY       = os.environ.get("GROQ_API_KEY", "").strip()
 CF_ACCOUNT     = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
 CF_TOKEN       = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
-HF_TOKEN       = os.environ.get("HUGGINGFACE_TOKEN", "").strip()
+POLLINATIONS_KEY = os.environ.get("POLLINATIONS_API_KEY", "").strip()
 MH_KEY         = os.environ.get("MAGIC_HOUR_API_KEY", "").strip()
 REPLICATE_KEY  = os.environ.get("REPLICATE_API_TOKEN", "").strip()
 
@@ -55,101 +54,128 @@ def ferramenta_imagem(prompt):
 
 
 # ============================================================
-# IMAGEM -> VIDEO (Ken Burns - funciona sempre, gratis)
+# VIDEO - Pollinations AI (GRATIS com veo/seedance)
 # ============================================================
-def imagem_para_video_kenburns(prompt, duracao=5):
-    """Gera imagem + aplica Ken Burns (zoom/pan) = video."""
-    nome_img, err = ferramenta_imagem(prompt)
-    if err:
-        return None, "falha ao gerar imagem: " + err
-
-    img_path = MIDIA / nome_img
-    nome_vid = "vid_kb_" + uuid.uuid4().hex[:8] + ".mp4"
-    caminho = MIDIA / nome_vid
-
-    cmd = ["ffmpeg", "-y", "-loop", "1", "-i", str(img_path),
-           "-t", str(duracao),
-           "-vf", "zoompan=z='min(zoom+0.0015,1.5)':d=" + str(duracao*25) + ":s=720x1280,format=yuv420p",
-           "-c:v", "libx264", "-preset", "fast", "-crf", "23", str(caminho)]
-
-    try:
-        subprocess.run(cmd, check=True, capture_output=True)
-        return nome_vid, None
-    except Exception as e:
-        return None, "ffmpeg falhou: " + str(e)[:80]
-
-
-# ============================================================
-# VIDEO (Replicate)
-# ============================================================
-def video_replicate(prompt, duracao=5):
-    """Replicate - usa modelo de video."""
-    if not REPLICATE_KEY:
+def video_pollinations(prompt, duracao=5):
+    """Pollinations AI - gera video gratis com modelos veo/seedance."""
+    if not POLLINATIONS_KEY:
         return None, "sem chave"
 
-    # Modelos de video do Replicate
-    modelos = [
-        # Modelo de texto pra video (SVD)
-        "stability-ai/stable-video-diffusion:3f0457e4619daac51203dedb472816fd4af51f3149fa7a9e0b5ffcf1b8172438",
-        # Modelo LTX Video
-        "lightricks/ltx-video:8c47da666861d081eeb4d126488d1903a245b6d1c9b3e2e47a5c5d6c5c5c5c5c",
-    ]
+    # Modelos gratis: veo, seedance, seedance-pro
+    # A API usa GET com prompt na URL
+    import urllib.parse
+    prompt_encoded = urllib.parse.quote(prompt, safe="")
+    url = "https://gen.pollinations.ai/video/" + prompt_encoded
+    params = "?model=veo&duration=" + str(duracao) + "&aspectRatio=9:16"
 
-    for modelo in modelos:
-        try:
-            url = "https://api.replicate.com/v1/predictions"
-            partes = modelo.split(":")
-            version = partes[1] if len(partes) > 1 else ""
-            body = json.dumps({"version": version, "input": {"prompt": prompt}}).encode()
-
-            req = urllib.request.Request(url, data=body,
-                headers={"Authorization": "Token " + REPLICATE_KEY, "Content-Type": "application/json"},
-                method="POST")
-            with urllib.request.urlopen(req, timeout=60) as r:
-                d = json.loads(r.read().decode())
-
-            pred_id = d.get("id")
-            if not pred_id:
-                continue
-
-            for _ in range(36):
-                time.sleep(5)
-                req2 = urllib.request.Request("https://api.replicate.com/v1/predictions/" + pred_id,
-                    headers={"Authorization": "Token " + REPLICATE_KEY}, method="GET")
-                with urllib.request.urlopen(req2, timeout=30) as r2:
-                    s = json.loads(r2.read().decode())
-
-                if s.get("status") == "succeeded":
-                    output = s.get("output")
-                    url_vid = output if isinstance(output, str) else (output[0] if output else None)
-                    if url_vid:
-                        nome = "vid_rep_" + uuid.uuid4().hex[:8] + ".mp4"
-                        urllib.request.urlretrieve(url_vid, MIDIA / nome)
-                        return nome, None
-                    break
-                elif s.get("status") == "failed":
-                    break
-        except Exception:
-            continue
-    return None, "Replicate falhou"
+    try:
+        req = urllib.request.Request(url + params,
+            headers={"Authorization": "Bearer " + POLLINATIONS_KEY, "User-Agent": UA},
+            method="GET")
+        with urllib.request.urlopen(req, timeout=180) as r:
+            video_bytes = r.read()
+            if len(video_bytes) < 1000:
+                return None, "video vazio"
+            nome = "vid_poll_" + uuid.uuid4().hex[:8] + ".mp4"
+            (MIDIA / nome).write_bytes(video_bytes)
+            return nome, None
+    except Exception as e:
+        return None, "Pollinations falhou: " + str(e)[:80]
 
 
 # ============================================================
-# GERAR VIDEO (tenta Replicate, se falhar usa Ken Burns)
+# VIDEO - Magic Hour (creditos gratis)
+# ============================================================
+def video_magichour(prompt, duracao=5):
+    if not MH_KEY:
+        return None, "sem chave"
+    url = "https://api.magichour.ai/v1/text-to-video"
+    body = json.dumps({
+        "end_seconds": duracao, "aspect_ratio": "9:16", "resolution": "480p",
+        "model": "ltx-2.5", "style": {"prompt": prompt}
+    }).encode()
+    try:
+        req = urllib.request.Request(url, data=body,
+            headers={"Authorization": "Bearer " + MH_KEY, "Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=60) as r:
+            d = json.loads(r.read().decode())
+        job_id = d.get("id")
+        if not job_id:
+            return None, "sem id"
+        for _ in range(36):
+            time.sleep(5)
+            req2 = urllib.request.Request("https://api.magichour.ai/v1/video-projects/" + job_id,
+                headers={"Authorization": "Bearer " + MH_KEY}, method="GET")
+            with urllib.request.urlopen(req2, timeout=30) as r2:
+                s = json.loads(r2.read().decode())
+            if s.get("status") == "complete":
+                url_vid = s.get("download", {}).get("url")
+                if url_vid:
+                    nome = "vid_mh_" + uuid.uuid4().hex[:8] + ".mp4"
+                    urllib.request.urlretrieve(url_vid, MIDIA / nome)
+                    return nome, None
+                return None, "sem url"
+            elif s.get("status") in ("error", "failed"):
+                return None, "falhou"
+        return None, "timeout"
+    except Exception as e:
+        return None, str(e)[:80]
+
+
+# ============================================================
+# VIDEO - Replicate (pago, se tiver credito)
+# ============================================================
+def video_replicate(prompt, duracao=5):
+    if not REPLICATE_KEY:
+        return None, "sem chave"
+    url = "https://api.replicate.com/v1/predictions"
+    body = json.dumps({
+        "version": "9f747673945c62801b13b84701c783929c0ee784e4748ec062204894dda1a351",
+        "input": {"prompt": prompt}
+    }).encode()
+    try:
+        req = urllib.request.Request(url, data=body,
+            headers={"Authorization": "Token " + REPLICATE_KEY, "Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=60) as r:
+            d = json.loads(r.read().decode())
+        pred_id = d.get("id")
+        if not pred_id:
+            return None, "sem id"
+        for _ in range(36):
+            time.sleep(5)
+            req2 = urllib.request.Request("https://api.replicate.com/v1/predictions/" + pred_id,
+                headers={"Authorization": "Token " + REPLICATE_KEY}, method="GET")
+            with urllib.request.urlopen(req2, timeout=30) as r2:
+                s = json.loads(r2.read().decode())
+            if s.get("status") == "succeeded":
+                output = s.get("output")
+                url_vid = output if isinstance(output, str) else (output[0] if output else None)
+                if url_vid:
+                    nome = "vid_rep_" + uuid.uuid4().hex[:8] + ".mp4"
+                    urllib.request.urlretrieve(url_vid, MIDIA / nome)
+                    return nome, None
+                return None, "sem url"
+            elif s.get("status") == "failed":
+                return None, "falhou"
+        return None, "timeout"
+    except Exception as e:
+        return None, str(e)[:80]
+
+
+# ============================================================
+# GERAR VIDEO (Pollinations -> Magic Hour -> Replicate)
 # ============================================================
 def gerar_video(prompt, duracao=5):
-    """Tenta Replicate primeiro. Se falhar, usa Ken Burns (sempre funciona)."""
-    print("[video] tentando Replicate...")
-    res, err = video_replicate(prompt, duracao)
-    if res:
-        return res, None, "Replicate"
-
-    print("[video] Replicate falhou, usando Ken Burns...")
-    res, err = imagem_para_video_kenburns(prompt, duracao)
-    if res:
-        return res, None, "Cloudflare + Ken Burns"
-
-    return None, "Todas falharam: " + str(err), None
+    """Tenta Pollinations (gratis), depois Magic Hour, depois Replicate."""
+    for nome, func in [("Pollinations", video_pollinations),
+                       ("Magic Hour", video_magichour),
+                       ("Replicate", video_replicate)]:
+        print("[video] tentando " + nome + "...")
+        res, err = func(prompt, duracao)
+        if res:
+            return res, None, nome
+        print("[video] " + nome + " falhou: " + str(err))
+    return None, "Todas as APIs de video falharam", None
 
 
 # ============================================================
@@ -207,21 +233,20 @@ def montar_contexto(ia, limite):
 
 
 def ia_interpretar_pedido(msg, ia):
-    """IA decide o que fazer."""
     limite = 3 if ia == "gemini" else 8
     contexto = montar_contexto(ia, limite)
 
     prompt = (
-        "Voce e uma IA que decide quando usar ferramentas.\n\n"
+        "Voce decide quando usar ferramentas.\n\n"
         "FERRAMENTAS:\n"
         "- IMAGEM: gera imagens estaticas\n"
-        "- VIDEO: gera videos de 3-6 segundos (usa Replicate ou Ken Burns)\n"
+        "- VIDEO: gera videos com movimento e acao (3-6s)\n"
         "- CONVERSA: so texto\n\n"
-        "Responda APENAS com JSON valido:\n"
-        '{"acao":"imagem|video|conversa","prompt":"prompt em ingles detalhado","duracao":5,"comentario":"mensagem amigavel em PT"}\n\n'
+        "Responda APENAS com JSON:\n"
+        '{"acao":"imagem|video|conversa","prompt":"prompt em ingles detalhado com acao e movimento","duracao":5,"comentario":"mensagem em PT"}\n\n'
         "Exemplos:\n"
         'Usuario: "cria um video de gato correndo"\n'
-        '{"acao":"video","prompt":"a cute cat running on green grass, cinematic lighting, slow motion","duracao":5,"comentario":"Vou criar um video do gatinho correndo!"}\n\n'
+        '{"acao":"video","prompt":"a cute cat running fast on green grass, dynamic action, cinematic slow motion, detailed fur","duracao":5,"comentario":"Vou criar um video do gatinho correndo!"}\n\n'
         'Usuario: "faz uma imagem de por do sol"\n'
         '{"acao":"imagem","prompt":"beautiful sunset over mountains, cinematic, high quality","duracao":0,"comentario":"Vou gerar uma imagem do por do sol!"}\n\n'
         'Usuario: "oi tudo bem"\n'
@@ -270,14 +295,14 @@ def chat():
 
     if acao == "imagem":
         nome, err = ferramenta_imagem(prompt_f)
-        resp = (comentario + " ✅ Imagem gerada!") if not err else ("Erro: " + err)
+        resp = (comentario + " Imagem gerada!") if not err else ("Erro: " + err)
         item = {"user": msg, "ia": resp, "quem": ia.capitalize(), "tipo": "imagem", "midia": nome if not err else None}
         HISTORICO.append(item)
         return jsonify({"ok": True, "resposta": resp, "ia": ia.capitalize(), "tipo": "imagem", "midia": item["midia"]})
 
     if acao == "video":
         nome, err, ferramenta = gerar_video(prompt_f, duracao)
-        resp = (comentario + " ✅ Video gerado com " + (ferramenta or "?")) if not err else ("Erro: " + err)
+        resp = (comentario + " Video gerado com " + (ferramenta or "?")) if not err else ("Erro: " + err)
         item = {"user": msg, "ia": resp, "quem": ia.capitalize(), "tipo": "video", "midia": nome if not err else None}
         HISTORICO.append(item)
         return jsonify({"ok": True, "resposta": resp, "ia": ia.capitalize(), "tipo": "video", "midia": item["midia"]})
