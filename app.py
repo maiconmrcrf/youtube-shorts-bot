@@ -1,5 +1,5 @@
 """
-app.py — Chat com 2 IAs + ferramentas (Pollinations Video + Cloudflare).
+app.py — Chat com 2 IAs + geração de vídeo pelo GEMINI (omni).
 """
 import base64
 import json
@@ -17,9 +17,6 @@ GEMINI_KEY     = os.environ.get("GEMINI_KEY_IA", "").strip() or os.environ.get("
 GROQ_KEY       = os.environ.get("GROQ_API_KEY", "").strip()
 CF_ACCOUNT     = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
 CF_TOKEN       = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
-POLLINATIONS_KEY = os.environ.get("POLLINATIONS_API_KEY", "").strip()
-MH_KEY         = os.environ.get("MAGIC_HOUR_API_KEY", "").strip()
-REPLICATE_KEY  = os.environ.get("REPLICATE_API_TOKEN", "").strip()
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
 
@@ -31,155 +28,117 @@ MIDIA.mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================
-# IMAGEM (Cloudflare FLUX)
+# IMAGEM (Gemini 3.1 flash image ou Cloudflare)
 # ============================================================
 def ferramenta_imagem(prompt):
-    if not CF_ACCOUNT or not CF_TOKEN:
-        return None, "Cloudflare nao configurado"
-    url = "https://api.cloudflare.com/client/v4/accounts/" + CF_ACCOUNT + "/ai/run/@cf/black-forest-labs/flux-1-schnell"
-    body = json.dumps({"prompt": prompt, "steps": 4}).encode()
-    req = urllib.request.Request(url, data=body,
-        headers={"Authorization": "Bearer " + CF_TOKEN, "Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=90) as r:
-            d = json.loads(r.read().decode())
-        if not d.get("success"):
-            return None, "FLUX falhou"
-        img_bytes = base64.b64decode(d["result"]["image"])
-        nome = "img_" + uuid.uuid4().hex[:8] + ".jpg"
-        (MIDIA / nome).write_bytes(img_bytes)
-        return nome, None
-    except Exception as e:
-        return None, str(e)[:80]
+    # Tenta Gemini image primeiro
+    if GEMINI_KEY:
+        modelos_img = ["gemini-3.1-flash-image", "gemini-3-pro-image", "gemini-2.5-flash-image"]
+        for modelo in modelos_img:
+            try:
+                url = "https://generativelanguage.googleapis.com/v1beta/models/" + modelo + ":generateContent?key=" + GEMINI_KEY
+                body = {"contents": [{"role": "user", "parts": [{"text": "Gere uma imagem: " + prompt}]}]}
+                req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                    headers={"Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(req, timeout=90) as r:
+                    d = json.loads(r.read().decode())
+                # Procura partes com inline_data (imagem)
+                for p in d["candidates"][0]["content"]["parts"]:
+                    if "inline_data" in p:
+                        img_bytes = base64.b64decode(p["inline_data"]["data"])
+                        nome = "img_" + uuid.uuid4().hex[:8] + ".jpg"
+                        (MIDIA / nome).write_bytes(img_bytes)
+                        return nome, None
+            except Exception:
+                continue
 
-
-# ============================================================
-# VIDEO - Pollinations AI (GRATIS com veo/seedance)
-# ============================================================
-def video_pollinations(prompt, duracao=5):
-    """Pollinations AI - gera video gratis com modelos veo/seedance."""
-    if not POLLINATIONS_KEY:
-        return None, "sem chave"
-
-    # Modelos gratis: veo, seedance, seedance-pro
-    # A API usa GET com prompt na URL
-    import urllib.parse
-    prompt_encoded = urllib.parse.quote(prompt, safe="")
-    url = "https://gen.pollinations.ai/video/" + prompt_encoded
-    params = "?model=veo&duration=" + str(duracao) + "&aspectRatio=9:16"
-
-    try:
-        req = urllib.request.Request(url + params,
-            headers={"Authorization": "Bearer " + POLLINATIONS_KEY, "User-Agent": UA},
-            method="GET")
-        with urllib.request.urlopen(req, timeout=180) as r:
-            video_bytes = r.read()
-            if len(video_bytes) < 1000:
-                return None, "video vazio"
-            nome = "vid_poll_" + uuid.uuid4().hex[:8] + ".mp4"
-            (MIDIA / nome).write_bytes(video_bytes)
-            return nome, None
-    except Exception as e:
-        return None, "Pollinations falhou: " + str(e)[:80]
-
-
-# ============================================================
-# VIDEO - Magic Hour (creditos gratis)
-# ============================================================
-def video_magichour(prompt, duracao=5):
-    if not MH_KEY:
-        return None, "sem chave"
-    url = "https://api.magichour.ai/v1/text-to-video"
-    body = json.dumps({
-        "end_seconds": duracao, "aspect_ratio": "9:16", "resolution": "480p",
-        "model": "ltx-2.5", "style": {"prompt": prompt}
-    }).encode()
-    try:
+    # Fallback Cloudflare
+    if CF_ACCOUNT and CF_TOKEN:
+        url = "https://api.cloudflare.com/client/v4/accounts/" + CF_ACCOUNT + "/ai/run/@cf/black-forest-labs/flux-1-schnell"
+        body = json.dumps({"prompt": prompt, "steps": 4}).encode()
         req = urllib.request.Request(url, data=body,
-            headers={"Authorization": "Bearer " + MH_KEY, "Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=60) as r:
-            d = json.loads(r.read().decode())
-        job_id = d.get("id")
-        if not job_id:
-            return None, "sem id"
-        for _ in range(36):
-            time.sleep(5)
-            req2 = urllib.request.Request("https://api.magichour.ai/v1/video-projects/" + job_id,
-                headers={"Authorization": "Bearer " + MH_KEY}, method="GET")
-            with urllib.request.urlopen(req2, timeout=30) as r2:
-                s = json.loads(r2.read().decode())
-            if s.get("status") == "complete":
-                url_vid = s.get("download", {}).get("url")
-                if url_vid:
-                    nome = "vid_mh_" + uuid.uuid4().hex[:8] + ".mp4"
-                    urllib.request.urlretrieve(url_vid, MIDIA / nome)
-                    return nome, None
-                return None, "sem url"
-            elif s.get("status") in ("error", "failed"):
-                return None, "falhou"
-        return None, "timeout"
-    except Exception as e:
-        return None, str(e)[:80]
+            headers={"Authorization": "Bearer " + CF_TOKEN, "Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=90) as r:
+                d = json.loads(r.read().decode())
+            if d.get("success"):
+                img_bytes = base64.b64decode(d["result"]["image"])
+                nome = "img_" + uuid.uuid4().hex[:8] + ".jpg"
+                (MIDIA / nome).write_bytes(img_bytes)
+                return nome, None
+        except Exception:
+            pass
+
+    return None, "Todas as APIs de imagem falharam"
 
 
 # ============================================================
-# VIDEO - Replicate (pago, se tiver credito)
+# VIDEO (Gemini omni - GRATIS e sem limite pratico)
 # ============================================================
-def video_replicate(prompt, duracao=5):
-    if not REPLICATE_KEY:
+def ferramenta_video_gemini(prompt, duracao=5):
+    """Gera video com o Gemini Omni."""
+    if not GEMINI_KEY:
         return None, "sem chave"
-    url = "https://api.replicate.com/v1/predictions"
-    body = json.dumps({
-        "version": "9f747673945c62801b13b84701c783929c0ee784e4748ec062204894dda1a351",
-        "input": {"prompt": prompt}
-    }).encode()
-    try:
-        req = urllib.request.Request(url, data=body,
-            headers={"Authorization": "Token " + REPLICATE_KEY, "Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=60) as r:
-            d = json.loads(r.read().decode())
-        pred_id = d.get("id")
-        if not pred_id:
-            return None, "sem id"
-        for _ in range(36):
-            time.sleep(5)
-            req2 = urllib.request.Request("https://api.replicate.com/v1/predictions/" + pred_id,
-                headers={"Authorization": "Token " + REPLICATE_KEY}, method="GET")
-            with urllib.request.urlopen(req2, timeout=30) as r2:
-                s = json.loads(r2.read().decode())
-            if s.get("status") == "succeeded":
-                output = s.get("output")
-                url_vid = output if isinstance(output, str) else (output[0] if output else None)
-                if url_vid:
-                    nome = "vid_rep_" + uuid.uuid4().hex[:8] + ".mp4"
-                    urllib.request.urlretrieve(url_vid, MIDIA / nome)
+
+    # Modelos de video do Gemini
+    modelos = ["gemini-omni-1.1-flash", "gemini-omni-flash-preview"]
+
+    for modelo in modelos:
+        try:
+            url = "https://generativelanguage.googleapis.com/v1beta/models/" + modelo + ":generateContent?key=" + GEMINI_KEY
+            body = {
+                "contents": [{"role": "user", "parts": [{
+                    "text": "Gere um video de " + str(duracao) + " segundos: " + prompt + ". Formato vertical 9:16."
+                }]}],
+                "generationConfig": {
+                    "responseModalities": ["VIDEO"]
+                }
+            }
+            req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=180) as r:
+                d = json.loads(r.read().decode())
+
+            # Procura por video na resposta
+            candidatos = d.get("candidates", [])
+            if not candidatos:
+                continue
+
+            for p in candidatos[0].get("content", {}).get("parts", []):
+                # Formato 1: inline_data com video
+                if "inline_data" in p and "video" in p["inline_data"].get("mime_type", ""):
+                    vid_bytes = base64.b64decode(p["inline_data"]["data"])
+                    nome = "vid_gem_" + uuid.uuid4().hex[:8] + ".mp4"
+                    (MIDIA / nome).write_bytes(vid_bytes)
                     return nome, None
-                return None, "sem url"
-            elif s.get("status") == "failed":
-                return None, "falhou"
-        return None, "timeout"
-    except Exception as e:
-        return None, str(e)[:80]
+
+                # Formato 2: file_data com URL
+                if "file_data" in p:
+                    url_vid = p["file_data"].get("file_uri") or p["file_data"].get("url")
+                    if url_vid:
+                        nome = "vid_gem_" + uuid.uuid4().hex[:8] + ".mp4"
+                        urllib.request.urlretrieve(url_vid, MIDIA / nome)
+                        return nome, None
+        except Exception as e:
+            print("[gemini video] " + modelo + " falhou: " + str(e)[:100])
+            continue
+
+    return None, "Gemini Omni nao retornou video"
 
 
 # ============================================================
-# GERAR VIDEO (Pollinations -> Magic Hour -> Replicate)
+# GERAR VIDEO
 # ============================================================
 def gerar_video(prompt, duracao=5):
-    """Tenta Pollinations (gratis), depois Magic Hour, depois Replicate."""
-    for nome, func in [("Pollinations", video_pollinations),
-                       ("Magic Hour", video_magichour),
-                       ("Replicate", video_replicate)]:
-        print("[video] tentando " + nome + "...")
-        res, err = func(prompt, duracao)
-        if res:
-            return res, None, nome
-        print("[video] " + nome + " falhou: " + str(err))
-    return None, "Todas as APIs de video falharam", None
+    print("[video] tentando Gemini Omni...")
+    res, err = ferramenta_video_gemini(prompt, duracao)
+    if res:
+        return res, None, "Gemini Omni"
+    return None, "Gemini Omni falhou: " + str(err), None
 
 
 # ============================================================
-# IA
+# IA (texto)
 # ============================================================
 def chamar_gemini(prompt_ia):
     if not GEMINI_KEY:
@@ -240,18 +199,18 @@ def ia_interpretar_pedido(msg, ia):
         "Voce decide quando usar ferramentas.\n\n"
         "FERRAMENTAS:\n"
         "- IMAGEM: gera imagens estaticas\n"
-        "- VIDEO: gera videos com movimento e acao (3-6s)\n"
+        "- VIDEO: gera videos com movimento (Gemini Omni)\n"
         "- CONVERSA: so texto\n\n"
         "Responda APENAS com JSON:\n"
-        '{"acao":"imagem|video|conversa","prompt":"prompt em ingles detalhado com acao e movimento","duracao":5,"comentario":"mensagem em PT"}\n\n'
+        '{"acao":"imagem|video|conversa","prompt":"prompt em ingles detalhado","duracao":5,"comentario":"mensagem em PT"}\n\n'
         "Exemplos:\n"
         'Usuario: "cria um video de gato correndo"\n'
-        '{"acao":"video","prompt":"a cute cat running fast on green grass, dynamic action, cinematic slow motion, detailed fur","duracao":5,"comentario":"Vou criar um video do gatinho correndo!"}\n\n'
+        '{"acao":"video","prompt":"a cute cat running fast on green grass, dynamic action, cinematic","duracao":5,"comentario":"Vou criar um video do gatinho correndo!"}\n\n'
         'Usuario: "faz uma imagem de por do sol"\n'
-        '{"acao":"imagem","prompt":"beautiful sunset over mountains, cinematic, high quality","duracao":0,"comentario":"Vou gerar uma imagem do por do sol!"}\n\n'
+        '{"acao":"imagem","prompt":"beautiful sunset over mountains, cinematic","duracao":0,"comentario":"Vou gerar uma imagem!"}\n\n'
         'Usuario: "oi tudo bem"\n'
         '{"acao":"conversa","prompt":"","duracao":0,"comentario":""}\n\n'
-        "Historico recente:\n" + contexto + "\n\n"
+        "Historico:\n" + contexto + "\n\n"
         "Usuario: " + msg + "\n"
         "JSON:"
     )
