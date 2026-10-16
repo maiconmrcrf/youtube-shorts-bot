@@ -13,12 +13,16 @@
             <button onclick="limparChat()" class="btn-limpar">🗑️ Limpar</button>
         </header>
 
+        <div class="abas">
+            <button class="aba ativa" data-ia="gemini" onclick="trocarAba('gemini')">
+                ✨ Gemini
+            </button>
+            <button class="aba" data-ia="groq" onclick="trocarAba('groq')">
+                ⚡ Groq
+            </button>
+        </div>
+
         <div id="chat-mensagens" class="chat-mensagens">
-            <div class="msg-ia">
-                <div class="balao">
-                    Oi! Sou sua IA pessoal. Como posso ajudar?
-                </div>
-            </div>
         </div>
 
         <div class="chat-input">

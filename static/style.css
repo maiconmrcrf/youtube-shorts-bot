@@ -145,3 +145,44 @@ body {
     background: rgba(64, 224, 208, 0.3);
     border-radius: 3px;
 }
+
+/* Abas */
+.abas {
+    display: flex;
+    gap: 0;
+    padding: 0 20px;
+    background: #0f0f1e;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.aba {
+    flex: 1;
+    padding: 14px;
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    color: #666;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.aba:hover {
+    color: #aaa;
+}
+
+.aba.ativa {
+    color: #40e0d0;
+    border-bottom-color: #40e0d0;
+}
+
+.aba[data-ia="gemini"].ativa {
+    color: #8b5cf6;
+    border-bottom-color: #8b5cf6;
+}
+
+.aba[data-ia="groq"].ativa {
+    color: #ff8c00;
+    border-bottom-color: #ff8c00;
+}

@@ -1,3 +1,5 @@
+let iaAtiva = 'gemini';
+
 const input = document.getElementById('msg-input');
 const btn = document.getElementById('btn-enviar');
 const chat = document.getElementById('chat-mensagens');
@@ -6,27 +8,60 @@ input.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') enviarMensagem();
 });
 
+// Troca de aba
+function trocarAba(ia) {
+    iaAtiva = ia;
+
+    // Atualiza botões
+    document.querySelectorAll('.aba').forEach(b => {
+        b.classList.toggle('ativa', b.dataset.ia === ia);
+    });
+
+    // Carrega histórico da IA
+    carregarHistorico();
+}
+
+// Carrega histórico da IA ativa
+async function carregarHistorico() {
+    chat.innerHTML = '';
+
+    try {
+        const resp = await fetch('/historico/' + iaAtiva);
+        const lista = await resp.json();
+
+        if (!lista.length) {
+            const nome = iaAtiva === 'gemini' ? 'Gemini' : 'Groq';
+            adicionarMsg('ia', `Oi! Sou o ${nome}. Como posso ajudar?`);
+            return;
+        }
+
+        lista.forEach(item => {
+            adicionarMsg('user', item.user);
+            adicionarMsg('ia', item.ia);
+        });
+    } catch (e) {
+        adicionarMsg('ia', '❌ Erro ao carregar histórico');
+    }
+}
+
 async function enviarMensagem() {
     const msg = input.value.trim();
     if (!msg) return;
 
-    // Adiciona mensagem do usuário
     adicionarMsg('user', msg);
     input.value = '';
     btn.disabled = true;
 
-    // Adiciona "digitando..."
     const digitando = adicionarMsg('ia', '⏳ Pensando...', true);
 
     try {
         const resp = await fetch('/chat', {
             method: 'POST',
             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            body: 'msg=' + encodeURIComponent(msg)
+            body: 'msg=' + encodeURIComponent(msg) + '&ia=' + encodeURIComponent(iaAtiva)
         });
         const dados = await resp.json();
 
-        // Remove o "digitando..."
         digitando.remove();
 
         if (dados.erro) {
@@ -51,7 +86,6 @@ function adicionarMsg(tipo, texto, temporario = false, ia = null) {
     const balao = document.createElement('div');
     balao.className = 'balao';
 
-    // Nome da IA (se tiver)
     if (ia) {
         const tag = document.createElement('span');
         tag.className = 'tag-ia';
@@ -59,9 +93,8 @@ function adicionarMsg(tipo, texto, temporario = false, ia = null) {
         balao.appendChild(tag);
     }
 
-    // Texto com quebras de linha
     const span = document.createElement('span');
-    span.innerHTML = texto.replace(/\\n/g, '<br>');
+    span.innerHTML = texto.replace(/\n/g, '<br>');
     balao.appendChild(span);
 
     div.appendChild(balao);
@@ -72,7 +105,10 @@ function adicionarMsg(tipo, texto, temporario = false, ia = null) {
 }
 
 async function limparChat() {
-    if (!confirm('Limpar toda a conversa?')) return;
-    await fetch('/limpar', {method: 'POST'});
-    chat.innerHTML = '<div class="msg-ia"><div class="balao">Oi! Sou sua IA pessoal. Como posso ajudar?</div></div>';
+    if (!confirm('Limpar a conversa do ' + (iaAtiva === 'gemini' ? 'Gemini' : 'Groq') + '?')) return;
+    await fetch('/limpar/' + iaAtiva, {method: 'POST'});
+    carregarHistorico();
 }
+
+// Inicia
+carregarHistorico();
