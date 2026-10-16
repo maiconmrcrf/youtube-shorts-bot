@@ -190,6 +190,7 @@ def gerar_video_rotacao(prompt, duracao=5):
 def chamar_gemini(prompt_ia):
     if not GEMINI_KEY:
         return None
+    # Modelos que estavam em "alta demanda" - cascata rapida
     modelos = [
         "gemini-3.8-flash",
         "gemini-3.6-flash",
@@ -198,6 +199,8 @@ def chamar_gemini(prompt_ia):
         "gemini-3.1-flash-lite",
         "gemini-flash-latest",
         "gemini-flash-lite-latest",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
     ]
     for modelo in modelos:
         try:
@@ -271,6 +274,10 @@ def ia_interpretar_pedido(msg, ia):
     )
     resp = chamar_ia(prompt, ia)
     if not resp:
+        # Fallback: tenta a outra IA
+        outra = "groq" if ia == "gemini" else "gemini"
+        resp = chamar_ia(prompt, outra)
+    if not resp:
         return {"acao": "conversa"}
 
     try:
@@ -327,10 +334,19 @@ def chat():
     prompt_final = sys_inst + "\n\nHistorico:\n" + contexto + "\n\nUSER: " + msg + "\nASSISTANT:"
 
     resp = chamar_ia(prompt_final, ia)
+
+    # Se a IA ativa falhar, tenta a outra automaticamente
+    if not resp:
+        outra = "groq" if ia == "gemini" else "gemini"
+        print("[fallback] " + ia + " falhou, tentando " + outra)
+        resp = chamar_ia(prompt_final, outra)
+        if resp:
+            ia = outra
+
     if resp:
         HISTORICO.append({"user": msg, "ia": resp, "quem": ia.capitalize()})
         return jsonify({"ok": True, "resposta": resp, "ia": ia.capitalize()})
-    return jsonify({"erro": "IA nao respondeu"}), 500
+    return jsonify({"erro": "Nenhuma IA respondeu"}), 500
 
 
 @app.route("/historico")
