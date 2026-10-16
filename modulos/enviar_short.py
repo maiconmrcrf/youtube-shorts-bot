@@ -9,7 +9,7 @@ import os
 import sys
 from pathlib import Path
 
-BASE = Path.home() / "yt"
+BASE = Path(__file__).parent.parent
 PUBLICACAO = BASE / "publicacao.json"
 
 

@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw, ImageFont
 from hashtags_db import pegar_tags
 from gemini_http import gerar as gemini_gerar, extrair_json, _chamar
 
-BASE = Path.home() / "yt"
+BASE = Path(__file__).parent.parent  # pasta do projeto
 TEMP = BASE / "temp"
 FONTES = BASE / "fontes"
 PUBLICACAO = BASE / "publicacao.json"
