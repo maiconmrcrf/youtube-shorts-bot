@@ -26,20 +26,23 @@ def chamar_gemini(mensagem):
     if not GEMINI_KEY:
         return None, "sem chave"
 
+    # Monta histórico
     contents = []
-    # Manda as últimas 15 interações pra dar contexto
     for h in HISTORICO[-15:]:
-        quem = h.get("ia", "Gemini")
+        quem = h.get("quem", "IA")
         contents.append({"role": "user", "parts": [{"text": h["user"]}]})
-        contents.append({"role": "model", "parts": [{"text": f"[{quem}] {h['ia']}"}]})
+        contents.append({"role": "model", "parts": [{"text": f"[{quem}]: {h['ia']}"}]})
     contents.append({"role": "user", "parts": [{"text": mensagem}]})
 
-    # Instrução do sistema: avisa que pode ter resposta de outra IA
     sys_instruction = (
-        "Você é uma IA pessoal amigável chamada Gemini. Responda em português BR.\n"
+        "Você é uma IA pessoal amigável chamada Gemini. Responda em português BR.
+"
         "IMPORTANTE: no histórico abaixo, mensagens marcadas com [Groq] foram "
-        "dadas por OUTRA IA (não por você). Use essas mensagens como contexto "
-        "pra entender o assunto da conversa, mas responda com sua própria opinião."
+        "dadas por OUTRA IA (não por você). Você PODE e DEVE corrigir o Groq "
+        "se ele errar, porque vocês estão trabalhando juntos pra ajudar o usuário.
+"
+        "Sempre que o usuário perguntar 'isso tá certo?' ou similar, olhe a "
+        "última resposta do Groq e avalie com sinceridade."
     )
 
     modelos = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"]
@@ -64,6 +67,8 @@ def chamar_gemini(mensagem):
     return None, "Gemini falhou"
 
 
+
+
 # ============================================================
 # GROQ
 # ============================================================
@@ -72,18 +77,25 @@ def chamar_groq(mensagem):
         return None, "sem chave"
 
     sys_instruction = (
-        "Você é uma IA pessoal amigável chamada Groq. Responda em português BR.\n"
+        "Você é uma IA pessoal amigável chamada Groq. Responda em português BR.
+"
         "IMPORTANTE: no histórico abaixo, mensagens marcadas com [Gemini] foram "
-        "dadas por OUTRA IA (não por você). Use essas mensagens como contexto "
-        "pra entender o assunto da conversa, mas responda com sua própria opinião."
+        "dadas por OUTRA IA (não por você). Você PODE e DEVE corrigir o Gemini "
+        "se ele errar, porque vocês estão trabalhando juntos pra ajudar o usuário.
+"
+        "Sempre que o usuário perguntar 'isso tá certo?' ou similar, olhe a "
+        "última resposta do Gemini e avalie com sinceridade."
     )
 
+    # Monta conversa com contexto EXPLÍCITO
     msgs = [{"role": "system", "content": sys_instruction}]
-    # Manda as últimas 15 interações com a marcação da IA que respondeu
     for h in HISTORICO[-15:]:
-        quem = h.get("ia", "Groq")
+        quem = h.get("quem", "IA")
+        # Mensagem do usuário
         msgs.append({"role": "user", "content": h["user"]})
-        msgs.append({"role": "assistant", "content": f"[{quem}] {h['ia']}"})
+        # Resposta da IA (com nome dela na frente)
+        msgs.append({"role": "assistant", "content": f"[{quem}]: {h['ia']}"})
+    # Pergunta atual
     msgs.append({"role": "user", "content": mensagem})
 
     try:
@@ -104,6 +116,8 @@ def chamar_groq(mensagem):
         return resp, "Groq"
     except Exception:
         return None, "Groq falhou"
+
+
 
 
 # ============================================================
