@@ -1,12 +1,11 @@
 """
-app.py — Chat com 2 IAs + ferramentas (imagem/video) em cascata.
-A IA interpreta o pedido, refina o prompt, escolhe a ferramenta e executa.
+app.py — Chat com 2 IAs + ferramentas em ROTAÇÃO.
+Cada video usa uma ferramenta diferente (Magic Hour -> Replicate -> HuggingFace -> volta).
 """
 import base64
 import json
 import os
 import re
-import subprocess
 import time
 import urllib.request
 import uuid
@@ -28,15 +27,18 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.
 HISTORICO = []
 IA_ATIVA = "gemini"
 
+# Rotação de ferramentas
+ROTACAO = ["magichour", "replicate", "huggingface"]
+INDICE_ROTACAO = 0
+
 MIDIA = Path("/tmp/midia_ia")
 MIDIA.mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================
-# FERRAMENTAS
+# FERRAMENTAS DE IMAGEM
 # ============================================================
 def ferramenta_imagem(prompt):
-    """Cloudflare FLUX."""
     if not CF_ACCOUNT or not CF_TOKEN:
         return None, "Cloudflare nao configurado"
     url = "https://api.cloudflare.com/client/v4/accounts/" + CF_ACCOUNT + "/ai/run/@cf/black-forest-labs/flux-1-schnell"
@@ -56,7 +58,10 @@ def ferramenta_imagem(prompt):
         return None, str(e)[:80]
 
 
-def ferramenta_video_magichour(prompt, duracao=5):
+# ============================================================
+# FERRAMENTAS DE VIDEO
+# ============================================================
+def video_magichour(prompt, duracao=5):
     if not MH_KEY:
         return None, "sem chave"
     url = "https://api.magichour.ai/v1/text-to-video"
@@ -92,7 +97,7 @@ def ferramenta_video_magichour(prompt, duracao=5):
         return None, str(e)[:80]
 
 
-def ferramenta_video_replicate(prompt, duracao=5):
+def video_replicate(prompt, duracao=5):
     if not REPLICATE_KEY:
         return None, "sem chave"
     url = "https://api.replicate.com/v1/predictions"
@@ -129,100 +134,138 @@ def ferramenta_video_replicate(prompt, duracao=5):
         return None, str(e)[:80]
 
 
-def ferramenta_video(prompt, duracao=5):
-    """Cascata de ferramentas de video."""
-    for nome, func in [("Magic Hour", ferramenta_video_magichour),
-                       ("Replicate", ferramenta_video_replicate)]:
-        print("[video] tentando " + nome + "...")
+def video_huggingface(prompt, duracao=5):
+    """Hugging Face - usa Space publico (gratis)."""
+    if not HF_TOKEN:
+        return None, "sem chave"
+    # Implementacao simples via Space do AnimateDiff
+    # (pode falhar - fallback pra outros)
+    return None, "nao implementado"
+
+
+FERRAMENTAS_VIDEO = {
+    "magichour": video_magichour,
+    "replicate": video_replicate,
+    "huggingface": video_huggingface,
+}
+
+
+def proxima_ferramenta():
+    """Rotaciona entre as ferramentas disponiveis."""
+    global INDICE_ROTACAO
+    # Pula ferramentas sem chave configurada
+    for _ in range(3):
+        ferramenta = ROTACAO[INDICE_ROTACAO]
+        INDICE_ROTACAO = (INDICE_ROTACAO + 1) % len(ROTACAO)
+        # Verifica se tem chave
+        if ferramenta == "magichour" and MH_KEY:
+            return ferramenta
+        if ferramenta == "replicate" and REPLICATE_KEY:
+            return ferramenta
+        if ferramenta == "huggingface" and HF_TOKEN:
+            return ferramenta
+    return None
+
+
+def gerar_video_rotacao(prompt, duracao=5):
+    """Tenta a ferramenta da vez. Se falhar, tenta a proxima."""
+    tentativas = 0
+    while tentativas < len(ROTACAO):
+        nome_ferramenta = proxima_ferramenta()
+        if not nome_ferramenta:
+            tentativas += 1
+            continue
+        func = FERRAMENTAS_VIDEO[nome_ferramenta]
+        print("[video] tentando " + nome_ferramenta)
         res, err = func(prompt, duracao)
         if res:
-            return res, None, nome
-        print("[video] " + nome + " falhou: " + str(err))
-    return None, "Todas falharam", None
+            return res, None, nome_ferramenta
+        print("[video] " + nome_ferramenta + " falhou: " + str(err))
+        tentativas += 1
+    return None, "Todas as ferramentas falharam", None
 
 
 # ============================================================
-# IA INTERMEDIÁRIA (decide quando chamar ferramenta)
+# IA
 # ============================================================
-def chamar_ia(prompt_ia, ia="gemini"):
-    if ia == "groq":
-        if not GROQ_KEY:
-            return None
+def chamar_gemini(prompt_ia):
+    """Gemini rapido - poucos modelos, timeout curto."""
+    if not GEMINI_KEY:
+        return None
+    modelos = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]  # 2 modelos rapidos
+    for modelo in modelos:
         try:
-            url = "https://api.groq.com/openai/v1/chat/completions"
-            body = {"model": "openai/gpt-oss-120b",
-                    "messages": [{"role": "user", "content": prompt_ia}],
-                    "temperature": 0.7}
+            url = "https://generativelanguage.googleapis.com/v1beta/models/" + modelo + ":generateContent?key=" + GEMINI_KEY
+            body = {"contents": [{"role": "user", "parts": [{"text": prompt_ia}]}]}
             req = urllib.request.Request(url, data=json.dumps(body).encode(),
-                headers={"Authorization": "Bearer " + GROQ_KEY, "Content-Type": "application/json", "User-Agent": UA},
-                method="POST")
-            with urllib.request.urlopen(req, timeout=90) as r:
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=30) as r:
                 d = json.loads(r.read().decode())
-            return d["choices"][0]["message"]["content"]
+            return d["candidates"][0]["content"]["parts"][0]["text"]
         except Exception:
-            return None
-    else:
-        if not GEMINI_KEY:
-            return None
-        modelos = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash",
-                   "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash"]
-        for modelo in modelos:
-            try:
-                url = "https://generativelanguage.googleapis.com/v1beta/models/" + modelo + ":generateContent?key=" + GEMINI_KEY
-                body = {"contents": [{"role": "user", "parts": [{"text": prompt_ia}]}]}
-                req = urllib.request.Request(url, data=json.dumps(body).encode(),
-                    headers={"Content-Type": "application/json"}, method="POST")
-                with urllib.request.urlopen(req, timeout=90) as r:
-                    d = json.loads(r.read().decode())
-                return d["candidates"][0]["content"]["parts"][0]["text"]
-            except Exception:
-                continue
+            continue
+    return None
+
+
+def chamar_groq(prompt_ia):
+    if not GROQ_KEY:
+        return None
+    try:
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        body = {"model": "openai/gpt-oss-120b",
+                "messages": [{"role": "user", "content": prompt_ia}],
+                "temperature": 0.7}
+        req = urllib.request.Request(url, data=json.dumps(body).encode(),
+            headers={"Authorization": "Bearer " + GROQ_KEY, "Content-Type": "application/json", "User-Agent": UA},
+            method="POST")
+        with urllib.request.urlopen(req, timeout=60) as r:
+            d = json.loads(r.read().decode())
+        return d["choices"][0]["message"]["content"]
+    except Exception:
         return None
 
 
+def chamar_ia(prompt_ia, ia):
+    if ia == "groq":
+        return chamar_groq(prompt_ia)
+    return chamar_gemini(prompt_ia)
+
+
+def montar_contexto(ia, limite):
+    """Monta o contexto com o limite de linhas especifico da IA."""
+    linhas = []
+    for h in HISTORICO[-limite:]:
+        quem = h.get("quem", "IA")
+        linhas.append("USER: " + h["user"])
+        linhas.append(quem.upper() + ": " + h["ia"])
+    return "\n".join(linhas)
+
+
 def ia_interpretar_pedido(msg, ia):
-    """A IA analisa o pedido e retorna JSON com a acao."""
+    """IA rapida pra decidir acao. Gemini le 3 linhas, Groq le 8."""
+    # Contexto limitado (Gemini 3, Groq 8)
+    limite = 3 if ia == "gemini" else 8
+    contexto = montar_contexto(ia, limite)
+
     prompt = (
-        "Voce e uma IA que decide quando usar ferramentas. Analise a mensagem do usuario.\n\n"
-        "Ferramentas disponiveis:\n"
-        "- IMAGEM: gera imagens (Cloudflare FLUX)\n"
-        "- VIDEO: gera videos de 3-6 segundos (Magic Hour/Replicate)\n"
-        "- CONVERSA: so responde texto\n\n"
-        "Responda SOMENTE com JSON valido:\n"
-        '{"acao": "imagem|video|conversa", "prompt": "prompt limpo e detalhado em ingles", "duracao": 5, "comentario": "o que vai fazer"}\n\n'
-        "Exemplo:\n"
-        'Usuario: "cria um video de um gato correndo por 5 segundos"\n'
-        'Resposta: {"acao": "video", "prompt": "a cute cat running on grass, cinematic, 5 seconds", "duracao": 5, "comentario": "Vou criar um video do gatinho correndo!"}\n\n'
-        "Agora responda para:\n"
-        'Usuario: "' + msg + '"\n'
+        "Voce decide quando usar ferramentas. Responda APENAS com JSON.\n"
+        "Ferramentas: IMAGEM (imagens), VIDEO (3-6s), CONVERSA (texto).\n"
+        "JSON: {\"acao\":\"imagem|video|conversa\",\"prompt\":\"prompt em ingles\",\"duracao\":5,\"comentario\":\"o que vai fazer\"}\n\n"
+        "Historico recente:\n" + contexto + "\n\n"
+        "Usuario: " + msg + "\n"
+        "JSON:"
     )
     resp = chamar_ia(prompt, ia)
     if not resp:
         return {"acao": "conversa"}
 
-    # Extrai JSON
     try:
-        return json.loads(resp)
-    except Exception:
         m = re.search(r'\{.*\}', resp, re.DOTALL)
         if m:
-            try:
-                return json.loads(m.group(0))
-            except Exception:
-                pass
-    return {"acao": "conversa"}
-
-
-# ============================================================
-# HISTÓRICO
-# ============================================================
-def montar_contexto():
-    msgs = []
-    for h in HISTORICO[-15:]:
-        quem = h.get("quem", "IA")
-        msgs.append({"role": "user", "content": h["user"]})
-        msgs.append({"role": "assistant", "content": "[" + quem + "]: " + h["ia"]})
-    return msgs
+            return json.loads(m.group(0))
+        return json.loads(resp)
+    except Exception:
+        return {"acao": "conversa"}
 
 
 # ============================================================
@@ -243,38 +286,35 @@ def chat():
 
     IA_ATIVA = ia
 
-    # 1) IA interpreta o pedido
+    # IA decide
     decisao = ia_interpretar_pedido(msg, ia)
     acao = decisao.get("acao", "conversa")
     comentario = decisao.get("comentario", "")
-    prompt_ferramenta = decisao.get("prompt", msg)
+    prompt_f = decisao.get("prompt", msg)
     duracao = decisao.get("duracao", 5)
 
-    print("[ia] acao=" + acao + " | prompt=" + prompt_ferramenta[:60])
+    print("[ia] " + ia + " -> " + acao)
 
-    # 2) Se for ferramenta, chama
     if acao == "imagem":
-        nome, err = ferramenta_imagem(prompt_ferramenta)
-        resp = (comentario + " ✅ Imagem gerada!") if not err else ("Erro: " + err)
+        nome, err = ferramenta_imagem(prompt_f)
+        resp = (comentario + " Imagem gerada!") if not err else ("Erro: " + err)
         item = {"user": msg, "ia": resp, "quem": ia.capitalize(), "tipo": "imagem", "midia": nome if not err else None}
         HISTORICO.append(item)
         return jsonify({"ok": True, "resposta": resp, "ia": ia.capitalize(), "tipo": "imagem", "midia": item["midia"]})
 
     if acao == "video":
-        nome, err, ferramenta = ferramenta_video(prompt_ferramenta, duracao)
-        resp = (comentario + " ✅ Video gerado com " + (ferramenta or "?")) if not err else ("Erro: " + err)
-        item = {"user": msg, "ia": resp, "quem": ia.capitalize(), "tipo": "video", "midia": nome if not err else None}
+        nome, err, ferramenta = gerar_video_rotacao(prompt_f, duracao)
+        resp = (comentario + " Video gerado com " + (ferramenta or "?")) if not err else ("Erro: " + err)
+        item = {"user": msg, "ia": resp, "quem": ia.capitalize(), "tipo": "video", "midia": nome if not err else None, "ferramenta": ferramenta}
         HISTORICO.append(item)
         return jsonify({"ok": True, "resposta": resp, "ia": ia.capitalize(), "tipo": "video", "midia": item["midia"]})
 
-    # 3) Conversa normal
-    contexto = montar_contexto()
-    sys_inst = ("Voce e uma IA pessoal amigavel chamada " + ia.capitalize() +
-                ". Responda em portugues BR. Mensagens marcadas com [outra_ia] foram dadas por outra IA.")
-    prompt_final = sys_inst + "\n\n"
-    for c in contexto:
-        prompt_final += c["role"].upper() + ": " + c["content"] + "\n"
-    prompt_final += "USER: " + msg + "\nASSISTANT:"
+    # Conversa
+    limite = 3 if ia == "gemini" else 8
+    contexto = montar_contexto(ia, limite)
+
+    sys_inst = "Voce e uma IA pessoal chamada " + ia.capitalize() + ". Responda em portugues BR de forma direta."
+    prompt_final = sys_inst + "\n\nHistorico:\n" + contexto + "\n\nUSER: " + msg + "\nASSISTANT:"
 
     resp = chamar_ia(prompt_final, ia)
     if resp:
