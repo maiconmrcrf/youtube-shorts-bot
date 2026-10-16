@@ -1,10 +1,10 @@
 """
 app.py — Servidor Flask do YouTube Shorts Bot
-Roda o criar.py de verdade, mostra resultado, e agenda.
+Usa o criar.py ORIGINAL do Termux (que já funciona).
 """
 import json
 import os
-import shutil
+import re
 import subprocess
 import sys
 import threading
@@ -19,69 +19,75 @@ MODULOS = BASE / "modulos"
 TEMP = BASE / "temp"
 TEMP.mkdir(parents=True, exist_ok=True)
 
+# Pasta onde o criar.py original salva (pode ser ~/yt/temp)
+TEMP_ORIGINAL = Path.home() / "yt" / "temp"
+
 app = Flask(__name__)
 
 JOBS = {}
 HISTORICO = []
 
 
-# ============================================================
-# HELPERS
-# ============================================================
 def rodar_criar(url_baixo, job_id):
-    """Roda o criar.py de verdade e atualiza o status."""
+    """Roda o criar.py original, mandando o link via stdin."""
     try:
         JOBS[job_id]["status"] = "rodando"
-        JOBS[job_id]["progresso"] = 5
+        JOBS[job_id]["progresso"] = 0
         JOBS[job_id]["msg"] = "Iniciando..."
 
-        # Monta o comando (roda o criar.py como subprocesso)
-        script = MODULOS / "criar.py"
+        # Usa o criar.py ORIGINAL (que funciona)
+        script = Path.home() / "yt" / "criar.py"
         if not script.exists():
             JOBS[job_id]["status"] = "erro"
-            JOBS[job_id]["msg"] = "criar.py nao encontrado"
+            JOBS[job_id]["msg"] = "criar.py nao encontrado em ~/yt/"
             return
 
-        # Aqui você pode adicionar INPUT via stdin se o criar.py pedir
-        # Por enquanto vamos rodar de forma nao-interativa
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
 
-        # Como o criar.py pede input() do link, precisamos passar via stdin
         proc = subprocess.Popen(
-            [sys.executable, str(script)],
+            [sys.executable, "-u", str(script)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             env=env,
-            cwd=str(MODULOS),
+            cwd=str(Path.home() / "yt"),
         )
 
-        # Manda o link como input
+        # Manda o link
         proc.stdin.write(url_baixo + "\n")
         proc.stdin.flush()
 
         # Le a saida em tempo real
+        buffer = ""
         for linha in proc.stdout:
             linha = linha.strip()
-            print(f"[CRIAR] {linha}")
-            # Tenta extrair progresso
-            if "%" in linha:
-                import re
-                m = re.search(r"(\d+)%", linha)
-                if m:
-                    JOBS[job_id]["progresso"] = int(m.group(1))
-            if linha:
-                JOBS[job_id]["msg"] = linha[:100]
+            buffer += linha + "\n"
+            print(f"[criar] {linha}")
+
+            # Extrai progresso
+            m = re.search(r"(\d+)%", linha)
+            if m:
+                pct = int(m.group(1))
+                JOBS[job_id]["progresso"] = pct
+
+            # Pega a mensagem
+            if linha and len(linha) < 200:
+                JOBS[job_id]["msg"] = linha
+
+            # Se pedir input de "s/n", manda "n"
+            if "Subir pro YouTube" in linha or "(s/n)" in linha:
+                try:
+                    proc.stdin.write("n\n")
+                    proc.stdin.flush()
+                except Exception:
+                    pass
 
         proc.wait()
 
         # Le o publicacao.json
-        pub = MODULOS / "publicacao.json"
-        if not pub.exists():
-            pub = BASE / "publicacao.json"
-
+        pub = Path.home() / "yt" / "publicacao.json"
         if pub.exists():
             dados = json.loads(pub.read_text(encoding="utf-8"))
             JOBS[job_id]["status"] = "concluido"
@@ -108,7 +114,7 @@ def rodar_criar(url_baixo, job_id):
             })
         else:
             JOBS[job_id]["status"] = "erro"
-            JOBS[job_id]["msg"] = "publicacao.json nao foi gerado"
+            JOBS[job_id]["msg"] = "publicacao.json nao gerado. Ultimas linhas: " + buffer[-300:]
 
     except Exception as e:
         JOBS[job_id]["status"] = "erro"
@@ -116,24 +122,28 @@ def rodar_criar(url_baixo, job_id):
 
 
 def postar_video(job_id):
-    """Roda o enviar_short.py."""
     try:
         JOBS[job_id]["status"] = "postando"
         JOBS[job_id]["msg"] = "Enviando pro YouTube..."
 
-        script = MODULOS / "enviar_short.py"
+        script = Path.home() / "yt" / "enviar_short.py"
+        if not script.exists():
+            JOBS[job_id]["status"] = "erro"
+            JOBS[job_id]["msg"] = "enviar_short.py nao encontrado"
+            return
+
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
 
         proc = subprocess.run(
             [sys.executable, str(script)],
             capture_output=True, text=True, env=env,
-            cwd=str(MODULOS),
+            cwd=str(Path.home() / "yt"),
         )
 
         saida = (proc.stdout + proc.stderr).lower()
 
-        if proc.returncode == 0 and "postado" in saida:
+        if proc.returncode == 0 and ("postado" in saida or "youtu.be" in saida):
             JOBS[job_id]["status"] = "postado"
             JOBS[job_id]["msg"] = "Postado com sucesso!"
             for h in HISTORICO:
@@ -141,13 +151,13 @@ def postar_video(job_id):
                     h["status"] = "postado"
         elif "limit" in saida or "quota" in saida or "429" in saida or "403" in saida:
             JOBS[job_id]["status"] = "limite"
-            JOBS[job_id]["msg"] = "Limite diario atingido. Agende pra depois."
+            JOBS[job_id]["msg"] = "Limite diario. Agende pra depois."
             for h in HISTORICO:
                 if h["id"] == job_id:
                     h["status"] = "limite"
         else:
             JOBS[job_id]["status"] = "erro"
-            JOBS[job_id]["msg"] = proc.stdout[-200:] or proc.stderr[-200:]
+            JOBS[job_id]["msg"] = (proc.stdout + proc.stderr)[-200:]
 
     except Exception as e:
         JOBS[job_id]["status"] = "erro"
@@ -155,7 +165,6 @@ def postar_video(job_id):
 
 
 def agendar_video(job_id, data_hora):
-    """Salva o agendamento pra postar depois."""
     for h in HISTORICO:
         if h["id"] == job_id:
             h["status"] = "agendado"
@@ -164,9 +173,6 @@ def agendar_video(job_id, data_hora):
     JOBS[job_id]["msg"] = f"Agendado pra {data_hora}"
 
 
-# ============================================================
-# ROTAS
-# ============================================================
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -230,8 +236,8 @@ def historico():
 
 @app.route("/video/<path:filename>")
 def video(filename):
-    """Serve o vídeo gerado."""
-    for base in (TEMP, MODULOS / "temp", Path("/sdcard/Download")):
+    # Procura em varias pastas
+    for base in (Path.home() / "yt" / "temp", Path("/sdcard/Download"), TEMP):
         p = base / filename
         if p.exists():
             return send_file(str(p), mimetype="video/mp4")
