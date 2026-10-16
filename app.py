@@ -23,7 +23,7 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.
 HISTORICO = []
 IA_ATIVA = "gemini"
 
-MIDIA = Path("/tmp/midia_ia")
+MIDIA = Path(__file__).parent / "midia"
 MIDIA.mkdir(parents=True, exist_ok=True)
 
 
