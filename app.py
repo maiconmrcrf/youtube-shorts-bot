@@ -1,6 +1,5 @@
 """
-app.py — Chat com 2 IAs + ferramentas em ROTAÇÃO.
-Cada video usa uma ferramenta diferente (Magic Hour -> Replicate -> HuggingFace -> volta).
+app.py — Chat com 2 IAs (Gemini + Groq) + geração de imagem/vídeo com ferramentas grátis.
 """
 import base64
 import json
@@ -8,206 +7,272 @@ import os
 import re
 import time
 import urllib.request
+import urllib.parse
 import uuid
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_file
 
 app = Flask(__name__)
 
-GEMINI_KEY     = os.environ.get("GEMINI_KEY_IA", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
-GROQ_KEY       = os.environ.get("GROQ_API_KEY", "").strip()
-CF_ACCOUNT     = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
-CF_TOKEN       = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
-HF_TOKEN       = os.environ.get("HUGGINGFACE_TOKEN", "").strip()
-MH_KEY         = os.environ.get("MAGIC_HOUR_API_KEY", "").strip()
-REPLICATE_KEY  = os.environ.get("REPLICATE_API_TOKEN", "").strip()
+GEMINI_KEY = os.environ.get("GEMINI_KEY_IA", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+GROQ_KEY   = os.environ.get("GROQ_API_KEY", "").strip()
+CF_ACCOUNT = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+CF_TOKEN   = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
+POLL_KEY   = os.environ.get("POLLINATIONS_API_KEY", "").strip()
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
 
 HISTORICO = []
 IA_ATIVA = "gemini"
 
-# Rotação de ferramentas
-ROTACAO = ["magichour", "replicate", "huggingface"]
-INDICE_ROTACAO = 0
-
 MIDIA = Path(__file__).parent / "midia"
 MIDIA.mkdir(parents=True, exist_ok=True)
 
+# Modelos Gemini REAIS (verificados na doc oficial)
+MODELOS_GEMINI = [
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-flash-latest",
+    "gemini-flash-lite-latest",
+]
+
+# Modelos de vídeo Omni (endpoint Interactions API, NÃO generateContent)
+MODELOS_OMNI = [
+    "gemini-omni-1.1-flash",
+    "gemini-omni-flash-preview",
+]
+
 
 # ============================================================
-# IMAGEM (Cloudflare FLUX)
+# IMAGEM GRÁTIS
 # ============================================================
-def ferramenta_imagem(prompt):
-    if not CF_ACCOUNT or not CF_TOKEN:
-        return None, "Cloudflare nao configurado"
-    url = "https://api.cloudflare.com/client/v4/accounts/" + CF_ACCOUNT + "/ai/run/@cf/black-forest-labs/flux-1-schnell"
+
+def imagem_pollinations(prompt):
+    """Pollinations: grátis, sem chave. Com chave = mais rápido/sem fila."""
+    prompt_enc = urllib.parse.quote(prompt, safe="")
+    base = "https://image.pollinations.ai/prompt/" + prompt_enc
+    params = "?model=flux&width=1024&height=1024&nologo=true"
+    if POLL_KEY:
+        params += "&key=" + POLL_KEY
+    url = base + params
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=90) as r:
+            img_bytes = r.read()
+            if len(img_bytes) > 1000:
+                nome = "img_poll_" + uuid.uuid4().hex[:8] + ".jpg"
+                (MIDIA / nome).write_bytes(img_bytes)
+                return nome, None
+    except Exception as e:
+        return None, "pollinations: " + str(e)[:80]
+    return None, "pollinations: resposta vazia"
+
+
+def imagem_cloudflare(prompt):
+    """Cloudflare Workers AI — FLUX.1 Schnell (free tier)."""
+    if not (CF_ACCOUNT and CF_TOKEN):
+        return None, "sem chave Cloudflare"
+    url = (
+        "https://api.cloudflare.com/client/v4/accounts/"
+        + CF_ACCOUNT
+        + "/ai/run/@cf/black-forest-labs/flux-1-schnell"
+    )
     body = json.dumps({"prompt": prompt, "steps": 4}).encode()
-    req = urllib.request.Request(url, data=body,
-        headers={"Authorization": "Bearer " + CF_TOKEN, "Content-Type": "application/json"}, method="POST")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Authorization": "Bearer " + CF_TOKEN,
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
     try:
         with urllib.request.urlopen(req, timeout=90) as r:
             d = json.loads(r.read().decode())
-        if not d.get("success"):
-            return None, "FLUX falhou"
-        img_bytes = base64.b64decode(d["result"]["image"])
-        nome = "img_" + uuid.uuid4().hex[:8] + ".jpg"
+        if d.get("success"):
+            img_bytes = base64.b64decode(d["result"]["image"])
+            nome = "img_cf_" + uuid.uuid4().hex[:8] + ".jpg"
+            (MIDIA / nome).write_bytes(img_bytes)
+            return nome, None
+        return None, "cloudflare: " + str(d.get("errors", "erro desconhecido"))[:80]
+    except Exception as e:
+        return None, "cloudflare: " + str(e)[:80]
+
+
+def imagem_picsum(prompt):
+    """Picsum Photos: placeholder grátis como último recurso (NÃO usa o prompt)."""
+    try:
+        seed = uuid.uuid4().hex[:8]
+        url = "https://picsum.photos/seed/" + seed + "/1024/1024"
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            img_bytes = r.read()
+        nome = "img_picsum_" + uuid.uuid4().hex[:8] + ".jpg"
         (MIDIA / nome).write_bytes(img_bytes)
         return nome, None
     except Exception as e:
-        return None, str(e)[:80]
+        return None, "picsum: " + str(e)[:80]
+
+
+def ferramenta_imagem(prompt):
+    """Tenta ferramentas grátis em cascata."""
+    # 1) Pollinations (melhor qualidade, grátis)
+    nome, err = imagem_pollinations(prompt)
+    if nome:
+        return nome, None, "Pollinations"
+
+    # 2) Cloudflare Workers AI (se tiver chave)
+    nome, err = imagem_cloudflare(prompt)
+    if nome:
+        return nome, None, "Cloudflare FLUX"
+
+    # 3) Picsum (último recurso, aleatório)
+    nome, err = imagem_picsum(prompt)
+    if nome:
+        return nome, None, "Picsum (placeholder)"
+
+    return None, "Todas as APIs de imagem falharam: " + err, None
 
 
 # ============================================================
-# VIDEO - Magic Hour
+# VÍDEO GRÁTIS
 # ============================================================
-def video_magichour(prompt, duracao=5):
-    if not MH_KEY:
-        return None, "sem chave"
-    url = "https://api.magichour.ai/v1/text-to-video"
-    body = json.dumps({
-        "end_seconds": duracao, "aspect_ratio": "9:16", "resolution": "480p",
-        "model": "ltx-2.5", "style": {"prompt": prompt}
-    }).encode()
+
+def video_omni_interactions(prompt, duracao=5):
+    """
+    Gemini Omni Flash via Interactions API.
+    Endpoint CORRETO: POST /v1beta/interactions
+    NÃO funciona com generateContent — só com interactions.create.
+    """
+    if not GEMINI_KEY:
+        return None, "sem chave Gemini"
+
+    for modelo in MODELOS_OMNI:
+        try:
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/interactions?key="
+                + GEMINI_KEY
+            )
+            body = {
+                "model": modelo,
+                "input": prompt,
+                "response_format": {
+                    "aspect_ratio": "9:16",
+                    "duration": duracao,
+                    "resolution": "720p",
+                },
+            }
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=180) as r:
+                d = json.loads(r.read().decode())
+
+            # Omni retorna inline base64
+            output = d.get("output_video") or d.get("outputVideo")
+            if output and output.get("data"):
+                vid_bytes = base64.b64decode(output["data"])
+                nome = "vid_omni_" + uuid.uuid4().hex[:8] + ".mp4"
+                (MIDIA / nome).write_bytes(vid_bytes)
+                return nome, None
+
+            # Às vezes vem via Files API URI
+            if output and output.get("uri"):
+                vid_req = urllib.request.Request(
+                    output["uri"], headers={"x-goog-api-key": GEMINI_KEY}
+                )
+                with urllib.request.urlopen(vid_req, timeout=120) as r:
+                    vid_bytes = r.read()
+                nome = "vid_omni_" + uuid.uuid4().hex[:8] + ".mp4"
+                (MIDIA / nome).write_bytes(vid_bytes)
+                return nome, None
+
+        except Exception as e:
+            print("[omni] " + modelo + " falhou: " + str(e)[:80])
+
+    return None, "Gemini Omni falhou"
+
+
+def video_kenburns(prompt, duracao=5):
+    """Fallback grátis: imagem → vídeo com zoom (Ken Burns) via ffmpeg."""
+    nome_img, err, _ = ferramenta_imagem(prompt)
+    if err:
+        return None, "imagem falhou: " + err
+
+    img_path = MIDIA / nome_img
+    nome_vid = "vid_kb_" + uuid.uuid4().hex[:8] + ".mp4"
+    caminho = MIDIA / nome_vid
+
+    import shutil
+    import subprocess
+
+    if not shutil.which("ffmpeg"):
+        return None, "ffmpeg não instalado"
+
+    # Força 25fps no input para duração correta
+    fps = 25
+    cmd = [
+        "ffmpeg", "-y",
+        "-loop", "1", "-i", str(img_path),
+        "-t", str(duracao),
+        "-r", str(fps),
+        "-vf", (
+            "zoompan=z='min(zoom+0.0015,1.5)':d="
+            + str(duracao * fps)
+            + ":s=720x1280,format=yuv420p"
+        ),
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        str(caminho),
+    ]
     try:
-        req = urllib.request.Request(url, data=body,
-            headers={"Authorization": "Bearer " + MH_KEY, "Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=60) as r:
-            d = json.loads(r.read().decode())
-        job_id = d.get("id")
-        if not job_id:
-            return None, "sem id"
-        for _ in range(36):
-            time.sleep(5)
-            req2 = urllib.request.Request("https://api.magichour.ai/v1/video-projects/" + job_id,
-                headers={"Authorization": "Bearer " + MH_KEY}, method="GET")
-            with urllib.request.urlopen(req2, timeout=30) as r2:
-                s = json.loads(r2.read().decode())
-            if s.get("status") == "complete":
-                url_vid = s.get("download", {}).get("url")
-                if url_vid:
-                    nome = "vid_mh_" + uuid.uuid4().hex[:8] + ".mp4"
-                    urllib.request.urlretrieve(url_vid, MIDIA / nome)
-                    return nome, None
-                return None, "sem url"
-            elif s.get("status") in ("error", "failed"):
-                return None, "falhou"
-        return None, "timeout"
+        subprocess.run(cmd, check=True, capture_output=True)
+        return nome_vid, None
     except Exception as e:
-        return None, str(e)[:80]
+        return None, "ffmpeg falhou: " + str(e)[:80]
+
+
+def gerar_video(prompt, duracao=5):
+    """Tenta Omni → Ken Burns (ambos grátis)."""
+    print("[video] tentando Gemini Omni (Interactions API)...")
+    res, err = video_omni_interactions(prompt, duracao)
+    if res:
+        return res, None, "Gemini Omni"
+
+    print("[video] Omni falhou, usando Ken Burns grátis...")
+    res, err = video_kenburns(prompt, duracao)
+    if res:
+        return res, None, "Imagem + Ken Burns"
+
+    return None, "Todas as ferramentas de vídeo falharam: " + err, None
 
 
 # ============================================================
-# VIDEO - Replicate
+# IA — Gemini
 # ============================================================
-def video_replicate(prompt, duracao=5):
-    if not REPLICATE_KEY:
-        return None, "sem chave"
-    url = "https://api.replicate.com/v1/predictions"
-    body = json.dumps({
-        "version": "9f747673945c62801b13b84701c783929c0ee784e4748ec062204894dda1a351",
-        "input": {"prompt": prompt}
-    }).encode()
-    try:
-        req = urllib.request.Request(url, data=body,
-            headers={"Authorization": "Token " + REPLICATE_KEY, "Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=60) as r:
-            d = json.loads(r.read().decode())
-        pred_id = d.get("id")
-        if not pred_id:
-            return None, "sem id"
-        for _ in range(36):
-            time.sleep(5)
-            req2 = urllib.request.Request("https://api.replicate.com/v1/predictions/" + pred_id,
-                headers={"Authorization": "Token " + REPLICATE_KEY}, method="GET")
-            with urllib.request.urlopen(req2, timeout=30) as r2:
-                s = json.loads(r2.read().decode())
-            if s.get("status") == "succeeded":
-                output = s.get("output")
-                url_vid = output if isinstance(output, str) else (output[0] if output else None)
-                if url_vid:
-                    nome = "vid_rep_" + uuid.uuid4().hex[:8] + ".mp4"
-                    urllib.request.urlretrieve(url_vid, MIDIA / nome)
-                    return nome, None
-                return None, "sem url"
-            elif s.get("status") == "failed":
-                return None, "falhou"
-        return None, "timeout"
-    except Exception as e:
-        return None, str(e)[:80]
 
-
-# ============================================================
-# VIDEO - Hugging Face
-# ============================================================
-def video_huggingface(prompt, duracao=5):
-    if not HF_TOKEN:
-        return None, "sem chave"
-    return None, "nao implementado"
-
-
-FERRAMENTAS_VIDEO = {
-    "magichour": video_magichour,
-    "replicate": video_replicate,
-    "huggingface": video_huggingface,
-}
-
-
-def proxima_ferramenta():
-    global INDICE_ROTACAO
-    for _ in range(3):
-        ferramenta = ROTACAO[INDICE_ROTACAO]
-        INDICE_ROTACAO = (INDICE_ROTACAO + 1) % len(ROTACAO)
-        if ferramenta == "magichour" and MH_KEY:
-            return ferramenta
-        if ferramenta == "replicate" and REPLICATE_KEY:
-            return ferramenta
-        if ferramenta == "huggingface" and HF_TOKEN:
-            return ferramenta
-    return None
-
-
-def gerar_video_rotacao(prompt, duracao=5):
-    tentativas = 0
-    while tentativas < len(ROTACAO):
-        nome_ferramenta = proxima_ferramenta()
-        if not nome_ferramenta:
-            tentativas += 1
-            continue
-        func = FERRAMENTAS_VIDEO[nome_ferramenta]
-        print("[video] tentando " + nome_ferramenta)
-        res, err = func(prompt, duracao)
-        if res:
-            return res, None, nome_ferramenta
-        print("[video] " + nome_ferramenta + " falhou: " + str(err))
-        tentativas += 1
-    return None, "Todas as ferramentas falharam", None
-
-
-# ============================================================
-# IA
-# ============================================================
 def chamar_gemini(prompt_ia):
     if not GEMINI_KEY:
         return None
-    # Modelos que estavam em "alta demanda" - cascata rapida
-    modelos = [
-        "gemini-3.8-flash",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-        "gemini-flash-latest",
-        "gemini-flash-lite-latest",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-    ]
-    for modelo in modelos:
+    for modelo in MODELOS_GEMINI:
         try:
-            url = "https://generativelanguage.googleapis.com/v1beta/models/" + modelo + ":generateContent?key=" + GEMINI_KEY
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                + modelo + ":generateContent?key=" + GEMINI_KEY
+            )
             body = {"contents": [{"role": "user", "parts": [{"text": prompt_ia}]}]}
-            req = urllib.request.Request(url, data=json.dumps(body).encode(),
-                headers={"Content-Type": "application/json"}, method="POST")
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
             with urllib.request.urlopen(req, timeout=30) as r:
                 d = json.loads(r.read().decode())
             return d["candidates"][0]["content"]["parts"][0]["text"]
@@ -216,17 +281,30 @@ def chamar_gemini(prompt_ia):
     return None
 
 
+# ============================================================
+# IA — Groq (OpenAI-compatible)
+# ============================================================
+
 def chamar_groq(prompt_ia):
     if not GROQ_KEY:
         return None
     try:
         url = "https://api.groq.com/openai/v1/chat/completions"
-        body = {"model": "openai/gpt-oss-120b",
-                "messages": [{"role": "user", "content": prompt_ia}],
-                "temperature": 0.7}
-        req = urllib.request.Request(url, data=json.dumps(body).encode(),
-            headers={"Authorization": "Bearer " + GROQ_KEY, "Content-Type": "application/json", "User-Agent": UA},
-            method="POST")
+        body = {
+            "model": "openai/gpt-oss-120b",
+            "messages": [{"role": "user", "content": prompt_ia}],
+            "temperature": 0.7,
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode(),
+            headers={
+                "Authorization": "Bearer " + GROQ_KEY,
+                "Content-Type": "application/json",
+                "User-Agent": UA,
+            },
+            method="POST",
+        )
         with urllib.request.urlopen(req, timeout=60) as r:
             d = json.loads(r.read().decode())
         return d["choices"][0]["message"]["content"]
@@ -249,23 +327,27 @@ def montar_contexto(ia, limite):
     return "\n".join(linhas)
 
 
+# ============================================================
+# DECISÃO DE FERRAMENTA (a IA escolhe)
+# ============================================================
+
 def ia_interpretar_pedido(msg, ia):
     limite = 3 if ia == "gemini" else 8
     contexto = montar_contexto(ia, limite)
 
     prompt = (
         "Voce decide quando usar ferramentas.\n\n"
-        "FERRAMENTAS:\n"
-        "- IMAGEM: gera imagens estaticas (Cloudflare)\n"
-        "- VIDEO: gera videos de 3-6 segundos (Magic Hour, Replicate)\n"
+        "FERRAMENTAS DISPONIVEIS (todas gratis):\n"
+        "- IMAGEM: gera imagens estaticas (Pollinations/Cloudflare FLUX)\n"
+        "- VIDEO: gera videos de 3-6 segundos (Gemini Omni ou Ken Burns)\n"
         "- CONVERSA: so texto\n\n"
         "Responda APENAS com JSON:\n"
         '{"acao":"imagem|video|conversa","prompt":"prompt em ingles detalhado","duracao":5,"comentario":"mensagem em PT"}\n\n'
         "Exemplos:\n"
         'Usuario: "cria um video de gato correndo"\n'
-        '{"acao":"video","prompt":"a cute cat running on green grass, cinematic action","duracao":5,"comentario":"Vou criar um video do gatinho correndo!"}\n\n'
+        '{"acao":"video","prompt":"a cute cat running on grass, cinematic action","duracao":5,"comentario":"Vou criar um video!"}\n\n'
         'Usuario: "faz uma imagem de por do sol"\n'
-        '{"acao":"imagem","prompt":"beautiful sunset over mountains, cinematic","duracao":0,"comentario":"Vou gerar uma imagem!"}\n\n'
+        '{"acao":"imagem","prompt":"beautiful sunset over mountains","duracao":0,"comentario":"Vou gerar uma imagem!"}\n\n'
         'Usuario: "oi tudo bem"\n'
         '{"acao":"conversa","prompt":"","duracao":0,"comentario":""}\n\n'
         "Historico:\n" + contexto + "\n\n"
@@ -273,10 +355,6 @@ def ia_interpretar_pedido(msg, ia):
         "JSON:"
     )
     resp = chamar_ia(prompt, ia)
-    if not resp:
-        # Fallback: tenta a outra IA
-        outra = "groq" if ia == "gemini" else "gemini"
-        resp = chamar_ia(prompt, outra)
     if not resp:
         return {"acao": "conversa"}
 
@@ -292,6 +370,7 @@ def ia_interpretar_pedido(msg, ia):
 # ============================================================
 # ROTAS
 # ============================================================
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -314,20 +393,45 @@ def chat():
 
     print("[ia] " + ia + " -> " + acao)
 
+    # ---- IMAGEM ----
     if acao == "imagem":
-        nome, err = ferramenta_imagem(prompt_f)
-        resp = (comentario + " Imagem gerada!") if not err else ("Erro: " + err)
-        item = {"user": msg, "ia": resp, "quem": ia.capitalize(), "tipo": "imagem", "midia": nome if not err else None}
+        nome, err, ferramenta = ferramenta_imagem(prompt_f)
+        if err:
+            resp = "Erro: " + err
+        else:
+            resp = (comentario + " Imagem gerada com " + ferramenta + "!").strip()
+        item = {
+            "user": msg, "ia": resp, "quem": ia.capitalize(),
+            "tipo": "imagem", "midia": nome if not err else None,
+            "ferramenta": ferramenta if not err else None,
+        }
         HISTORICO.append(item)
-        return jsonify({"ok": True, "resposta": resp, "ia": ia.capitalize(), "tipo": "imagem", "midia": item["midia"]})
+        return jsonify({
+            "ok": True, "resposta": resp, "ia": ia.capitalize(),
+            "tipo": "imagem", "midia": item["midia"],
+            "ferramenta": item["ferramenta"],
+        })
 
+    # ---- VIDEO ----
     if acao == "video":
-        nome, err, ferramenta = gerar_video_rotacao(prompt_f, duracao)
-        resp = (comentario + " Video gerado com " + (ferramenta or "?")) if not err else ("Erro: " + err)
-        item = {"user": msg, "ia": resp, "quem": ia.capitalize(), "tipo": "video", "midia": nome if not err else None}
+        nome, err, ferramenta = gerar_video(prompt_f, duracao)
+        if err:
+            resp = "Erro: " + err
+        else:
+            resp = (comentario + " Video gerado com " + ferramenta + "!").strip()
+        item = {
+            "user": msg, "ia": resp, "quem": ia.capitalize(),
+            "tipo": "video", "midia": nome if not err else None,
+            "ferramenta": ferramenta if not err else None,
+        }
         HISTORICO.append(item)
-        return jsonify({"ok": True, "resposta": resp, "ia": ia.capitalize(), "tipo": "video", "midia": item["midia"]})
+        return jsonify({
+            "ok": True, "resposta": resp, "ia": ia.capitalize(),
+            "tipo": "video", "midia": item["midia"],
+            "ferramenta": item["ferramenta"],
+        })
 
+    # ---- CONVERSA ----
     limite = 3 if ia == "gemini" else 8
     contexto = montar_contexto(ia, limite)
     sys_inst = "Voce e uma IA pessoal chamada " + ia.capitalize() + ". Responda em portugues BR."
@@ -335,7 +439,6 @@ def chat():
 
     resp = chamar_ia(prompt_final, ia)
 
-    # Se a IA ativa falhar, tenta a outra automaticamente
     if not resp:
         outra = "groq" if ia == "gemini" else "gemini"
         print("[fallback] " + ia + " falhou, tentando " + outra)
