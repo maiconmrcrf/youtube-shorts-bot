@@ -13,6 +13,7 @@ function trocarAba(ia) {
     document.querySelectorAll('.aba').forEach(b => {
         b.classList.toggle('ativa', b.dataset.ia === ia);
     });
+    // NÃO foca no input
 }
 
 async function carregarHistorico() {
@@ -66,7 +67,7 @@ async function enviarMensagem() {
     }
 
     btn.disabled = false;
-    input.focus();
+    // NÃO foca no input — deixa o usuário clicar se quiser
 }
 
 function adicionarMsg(tipo, texto, temporario = false, ia = null, tipoMidia = null, midia = null) {
@@ -84,12 +85,10 @@ function adicionarMsg(tipo, texto, temporario = false, ia = null, tipoMidia = nu
         balao.appendChild(tag);
     }
 
-    // Texto
     const span = document.createElement('span');
     span.innerHTML = texto.replace(/\n/g, '<br>');
     balao.appendChild(span);
 
-    // Midia (imagem ou video)
     if (midia) {
         const divMidia = document.createElement('div');
         divMidia.style.marginTop = '10px';
@@ -116,7 +115,7 @@ function adicionarMsg(tipo, texto, temporario = false, ia = null, tipoMidia = nu
 
     div.appendChild(balao);
     chat.appendChild(div);
-    chat.scrollTop = chat.scrollHeight;
+    // NÃO rola automaticamente — o usuário rola manualmente
     return div;
 }
 
