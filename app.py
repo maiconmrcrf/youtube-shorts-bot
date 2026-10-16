@@ -190,7 +190,15 @@ def gerar_video_rotacao(prompt, duracao=5):
 def chamar_gemini(prompt_ia):
     if not GEMINI_KEY:
         return None
-    modelos = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]
+    modelos = [
+        "gemini-3.8-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-latest",
+        "gemini-flash-lite-latest",
+    ]
     for modelo in modelos:
         try:
             url = "https://generativelanguage.googleapis.com/v1beta/models/" + modelo + ":generateContent?key=" + GEMINI_KEY
