@@ -1,187 +1,59 @@
 """
-app.py — Servidor Flask do YouTube Shorts Bot
-Usa o criar.py ORIGINAL do Termux (que já funciona).
+app.py — Chat de IA (Groq + Mistral + OpenRouter)
+Sem Gemini. Sem YouTube. Só conversa.
 """
 import json
 import os
-import re
-import subprocess
-import sys
-import threading
-import uuid
-from datetime import datetime
-from pathlib import Path
-
-from flask import Flask, render_template, request, jsonify, send_file
-
-BASE = Path(__file__).parent
-MODULOS = BASE / "modulos"
-TEMP = BASE / "temp"
-TEMP.mkdir(parents=True, exist_ok=True)
-
-# Pasta onde o criar.py original salva (pode ser ~/yt/temp)
-TEMP_ORIGINAL = MODULOS / "temp"
+import urllib.request
+from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
 
-JOBS = {}
-HISTORICO = []
+GROQ_KEY       = os.environ.get("GROQ_API_KEY", "").strip()
+MISTRAL_KEY    = os.environ.get("MISTRAL_API_KEY", "").strip()
+OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+
+HISTORICO = []  # histórico da conversa (em memória)
 
 
-def rodar_criar(url_baixo, job_id):
-    """Roda o criar.py original, mandando o link via stdin."""
-    try:
-        JOBS[job_id]["status"] = "rodando"
-        JOBS[job_id]["progresso"] = 0
-        JOBS[job_id]["msg"] = "Iniciando..."
+def chamar_ia(mensagem):
+    """Cascata: Groq -> Mistral -> OpenRouter."""
+    tentativas = [
+        ("Groq",       "https://api.groq.com/openai/v1/chat/completions",  GROQ_KEY,       "openai/gpt-oss-120b"),
+        ("Mistral",    "https://api.mistral.ai/v1/chat/completions",       MISTRAL_KEY,    "mistral-small-latest"),
+        ("OpenRouter", "https://openrouter.ai/api/v1/chat/completions",    OPENROUTER_KEY, "nvidia/nemotron-3.5-lightning:free"),
+    ]
 
-        # Usa o criar.py ORIGINAL (que funciona)
-        script = MODULOS / "criar.py"
-        if not script.exists():
-            JOBS[job_id]["status"] = "erro"
-            JOBS[job_id]["msg"] = "criar.py nao encontrado em modulos/"
-            return
+    # Monta histórico (últimas 10 mensagens)
+    msgs = [{"role": "system", "content": "Voce e uma IA pessoal amigavel. Responda em portugues BR de forma direta e util."}]
+    for h in HISTORICO[-10:]:
+        msgs.append({"role": "user", "content": h["user"]})
+        msgs.append({"role": "assistant", "content": h["ia"]})
+    msgs.append({"role": "user", "content": mensagem})
 
-        env = os.environ.copy()
-        env["PYTHONUNBUFFERED"] = "1"
+    for nome, url, key, model in tentativas:
+        if not key:
+            continue
+        try:
+            body = {"model": model, "messages": msgs, "temperature": 0.7}
+            req = urllib.request.Request(
+                url, data=json.dumps(body).encode(),
+                headers={
+                    "Authorization": "Bearer " + key,
+                    "Content-Type": "application/json",
+                    "User-Agent": UA,
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=90) as r:
+                d = json.loads(r.read().decode())
+            resp = d["choices"][0]["message"]["content"]
+            return resp, nome
+        except Exception:
+            continue
 
-        proc = subprocess.Popen(
-            [sys.executable, "-u", str(script)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            env=env,
-            cwd=str(MODULOS),
-        )
-
-        # Manda o link
-        proc.stdin.write(url_baixo + "\n")
-        proc.stdin.flush()
-
-        # Le a saida em tempo real
-        buffer = ""
-        for linha in proc.stdout:
-            linha = linha.strip()
-            buffer += linha + "\n"
-            print(f"[criar] {linha}")
-
-            # Extrai progresso
-            m = re.search(r"(\d+)%", linha)
-            if m:
-                pct = int(m.group(1))
-                JOBS[job_id]["progresso"] = pct
-
-            # Pega a mensagem
-            if linha and len(linha) < 200:
-                JOBS[job_id]["msg"] = linha
-
-            # Se pedir input de "s/n", manda "n"
-            if "Subir pro YouTube" in linha or "(s/n)" in linha:
-                try:
-                    proc.stdin.write("n\n")
-                    proc.stdin.flush()
-                except Exception:
-                    pass
-
-        proc.wait()
-
-        # Le o publicacao.json
-        # Procura publicacao.json em VÁRIOS lugares
-        candidatos = [
-            MODULOS / "publicacao.json",
-            BASE / "publicacao.json",
-            Path("/tmp/publicacao.json"),
-        ]
-        pub = None
-        for c in candidatos:
-            if c.exists():
-                pub = c
-                print(f"[app] publicacao.json encontrado em: {c}")
-                break
-        if pub.exists():
-            dados = json.loads(pub.read_text(encoding="utf-8"))
-            JOBS[job_id]["status"] = "concluido"
-            JOBS[job_id]["progresso"] = 100
-            JOBS[job_id]["msg"] = "Concluído!"
-            JOBS[job_id]["titulo"] = dados.get("titulo", "")
-            JOBS[job_id]["descricao"] = dados.get("descricao", "")
-            JOBS[job_id]["tags"] = dados.get("tags", [])
-            JOBS[job_id]["hashtags"] = dados.get("hashtags", "")
-            JOBS[job_id]["frase"] = dados.get("frase_curta", "")
-            JOBS[job_id]["video"] = dados.get("video", "")
-
-            HISTORICO.append({
-                "id": job_id,
-                "data": datetime.now().strftime("%d/%m/%Y %H:%M"),
-                "titulo": dados.get("titulo", ""),
-                "descricao": dados.get("descricao", ""),
-                "tags": dados.get("tags", []),
-                "hashtags": dados.get("hashtags", ""),
-                "frase": dados.get("frase_curta", ""),
-                "video": dados.get("video", ""),
-                "status": "aguardando",
-                "agendado_para": None,
-            })
-        else:
-            JOBS[job_id]["status"] = "erro"
-            JOBS[job_id]["msg"] = "publicacao.json nao gerado. Ultimas linhas: " + buffer[-300:]
-
-    except Exception as e:
-        JOBS[job_id]["status"] = "erro"
-        JOBS[job_id]["msg"] = str(e)
-
-
-def postar_video(job_id):
-    try:
-        JOBS[job_id]["status"] = "postando"
-        JOBS[job_id]["msg"] = "Enviando pro YouTube..."
-
-        script = MODULOS / "enviar_short.py"
-        if not script.exists():
-            JOBS[job_id]["status"] = "erro"
-            JOBS[job_id]["msg"] = "enviar_short.py nao encontrado"
-            return
-
-        env = os.environ.copy()
-        env["PYTHONUNBUFFERED"] = "1"
-
-        proc = subprocess.run(
-            [sys.executable, str(script)],
-            capture_output=True, text=True, env=env,
-            cwd=str(MODULOS),
-        )
-
-        saida = (proc.stdout + proc.stderr).lower()
-
-        if proc.returncode == 0 and ("postado" in saida or "youtu.be" in saida):
-            JOBS[job_id]["status"] = "postado"
-            JOBS[job_id]["msg"] = "Postado com sucesso!"
-            for h in HISTORICO:
-                if h["id"] == job_id:
-                    h["status"] = "postado"
-        elif "limit" in saida or "quota" in saida or "429" in saida or "403" in saida:
-            JOBS[job_id]["status"] = "limite"
-            JOBS[job_id]["msg"] = "Limite diario. Agende pra depois."
-            for h in HISTORICO:
-                if h["id"] == job_id:
-                    h["status"] = "limite"
-        else:
-            JOBS[job_id]["status"] = "erro"
-            JOBS[job_id]["msg"] = (proc.stdout + proc.stderr)[-200:]
-
-    except Exception as e:
-        JOBS[job_id]["status"] = "erro"
-        JOBS[job_id]["msg"] = str(e)
-
-
-def agendar_video(job_id, data_hora):
-    for h in HISTORICO:
-        if h["id"] == job_id:
-            h["status"] = "agendado"
-            h["agendado_para"] = data_hora
-    JOBS[job_id]["status"] = "agendado"
-    JOBS[job_id]["msg"] = f"Agendado pra {data_hora}"
+    return None, "Nenhuma IA respondeu"
 
 
 @app.route("/")
@@ -189,70 +61,25 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/criar", methods=["POST"])
-def criar():
-    url_baixo = request.form.get("url_baixo", "").strip()
-    if not url_baixo:
-        return jsonify({"erro": "Link obrigatorio"}), 400
+@app.route("/chat", methods=["POST"])
+def chat():
+    msg = request.form.get("msg", "").strip()
+    if not msg:
+        return jsonify({"erro": "Mensagem vazia"}), 400
 
-    job_id = str(uuid.uuid4())[:8]
-    JOBS[job_id] = {
-        "id": job_id,
-        "url": url_baixo,
-        "status": "iniciando",
-        "progresso": 0,
-        "msg": "Iniciando...",
-        "iniciado": datetime.now().isoformat(),
-    }
+    resp, quem = chamar_ia(msg)
 
-    t = threading.Thread(target=rodar_criar, args=(url_baixo, job_id))
-    t.daemon = True
-    t.start()
-
-    return jsonify({"job_id": job_id})
+    if resp:
+        HISTORICO.append({"user": msg, "ia": resp})
+        return jsonify({"ok": True, "resposta": resp, "ia": quem})
+    else:
+        return jsonify({"erro": "Nenhuma IA respondeu. Verifique as chaves."}), 500
 
 
-@app.route("/postar/<job_id>", methods=["POST"])
-def postar(job_id):
-    if job_id not in JOBS:
-        return jsonify({"erro": "Job nao encontrado"}), 404
-    t = threading.Thread(target=postar_video, args=(job_id,))
-    t.daemon = True
-    t.start()
+@app.route("/limpar", methods=["POST"])
+def limpar():
+    HISTORICO.clear()
     return jsonify({"ok": True})
-
-
-@app.route("/agendar/<job_id>", methods=["POST"])
-def agendar(job_id):
-    if job_id not in JOBS:
-        return jsonify({"erro": "Job nao encontrado"}), 404
-    data_hora = request.form.get("data_hora", "")
-    if not data_hora:
-        return jsonify({"erro": "Data obrigatoria"}), 400
-    agendar_video(job_id, data_hora)
-    return jsonify({"ok": True})
-
-
-@app.route("/status/<job_id>")
-def status(job_id):
-    if job_id not in JOBS:
-        return jsonify({"erro": "Job nao encontrado"}), 404
-    return jsonify(JOBS[job_id])
-
-
-@app.route("/historico")
-def historico():
-    return jsonify(HISTORICO[-20:])
-
-
-@app.route("/video/<path:filename>")
-def video(filename):
-    # Procura em varias pastas
-    for base in (MODULOS / "temp", TEMP):
-        p = base / filename
-        if p.exists():
-            return send_file(str(p), mimetype="video/mp4")
-    return jsonify({"erro": "Video nao encontrado"}), 404
 
 
 if __name__ == "__main__":

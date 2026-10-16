@@ -3,81 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎬 YouTube Shorts Bot</title>
+    <title>🤖 Super IA</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🎬 YouTube Shorts Bot</h1>
-            <p class="subtitle">Cole o link e a IA faz o resto</p>
+    <div class="chat-container">
+        <header class="chat-header">
+            <h1>🤖 Super IA</h1>
+            <button onclick="limparChat()" class="btn-limpar">🗑️ Limpar</button>
         </header>
 
-        <section class="card">
-            <label for="url_baixo">🔽 Link do vídeo de reação</label>
-            <input type="url" id="url_baixo" placeholder="https://www.instagram.com/reel/..." autocomplete="off">
-            <button id="btn-criar" onclick="criarVideo()">✨ CRIAR VÍDEO</button>
-        </section>
-
-        <section id="progresso" class="card escondido">
-            <h2>📊 Status</h2>
-            <div class="barra-container">
-                <div id="barra" class="barra"></div>
+        <div id="chat-mensagens" class="chat-mensagens">
+            <div class="msg-ia">
+                <div class="balao">
+                    Oi! Sou sua IA pessoal. Como posso ajudar?
+                </div>
             </div>
-            <p id="msg-progresso">Iniciando...</p>
-        </section>
+        </div>
 
-        <section id="resultado" class="card escondido">
-            <h2>✅ Vídeo Pronto!</h2>
-
-            <div class="campo">
-                <strong>🎬 Título:</strong>
-                <p id="res-titulo"></p>
-            </div>
-
-            <div class="campo">
-                <strong>📝 Descrição:</strong>
-                <p id="res-descricao"></p>
-            </div>
-
-            <div class="campo">
-                <strong>🏷️ Tags:</strong>
-                <p id="res-tags" class="tags"></p>
-            </div>
-
-            <div class="campo">
-                <strong>#️⃣ Hashtags:</strong>
-                <p id="res-hashtags" class="hashtags"></p>
-            </div>
-
-            <div class="campo">
-                <strong>💬 Frase curta:</strong>
-                <p id="res-frase"></p>
-            </div>
-
-            <div class="campo">
-                <strong>🎥 Vídeo:</strong>
-                <video id="res-video" controls width="100%" style="border-radius: 10px; margin-top: 8px;"></video>
-            </div>
-
-            <div id="acoes" class="acoes">
-                <button class="btn-postar" onclick="postarVideo()">✅ SIM, POSTAR AGORA</button>
-                <button class="btn-cancelar" onclick="naoPostar()">❌ NÃO</button>
-            </div>
-
-            <div id="agendamento-box" class="agendamento-box escondido">
-                <h3>⏰ Escolha quando postar:</h3>
-                <input type="datetime-local" id="data_agendamento">
-                <button class="btn-agendar" onclick="agendarVideo()">📅 AGENDAR</button>
-            </div>
-        </section>
-
-        <section class="card">
-            <h2>📋 Últimos vídeos</h2>
-            <div id="historico-lista">
-                <p class="vazio">Nenhum vídeo criado ainda.</p>
-            </div>
-        </section>
+        <div class="chat-input">
+            <input type="text" id="msg-input" placeholder="Digite sua mensagem..." autocomplete="off" autofocus>
+            <button onclick="enviarMensagem()" id="btn-enviar">➤</button>
+        </div>
     </div>
 
     <script src="/static/script.js"></script>
