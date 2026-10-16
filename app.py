@@ -20,7 +20,7 @@ TEMP = BASE / "temp"
 TEMP.mkdir(parents=True, exist_ok=True)
 
 # Pasta onde o criar.py original salva (pode ser ~/yt/temp)
-TEMP_ORIGINAL = Path.home() / "yt" / "temp"
+TEMP_ORIGINAL = MODULOS / "temp"
 
 app = Flask(__name__)
 
@@ -36,10 +36,10 @@ def rodar_criar(url_baixo, job_id):
         JOBS[job_id]["msg"] = "Iniciando..."
 
         # Usa o criar.py ORIGINAL (que funciona)
-        script = Path.home() / "yt" / "criar.py"
+        script = MODULOS / "criar.py"
         if not script.exists():
             JOBS[job_id]["status"] = "erro"
-            JOBS[job_id]["msg"] = "criar.py nao encontrado em ~/yt/"
+            JOBS[job_id]["msg"] = "criar.py nao encontrado em modulos/"
             return
 
         env = os.environ.copy()
@@ -52,7 +52,7 @@ def rodar_criar(url_baixo, job_id):
             stderr=subprocess.STDOUT,
             text=True,
             env=env,
-            cwd=str(Path.home() / "yt"),
+            cwd=str(MODULOS),
         )
 
         # Manda o link
@@ -87,7 +87,7 @@ def rodar_criar(url_baixo, job_id):
         proc.wait()
 
         # Le o publicacao.json
-        pub = Path.home() / "yt" / "publicacao.json"
+        pub = MODULOS / "publicacao.json"
         if pub.exists():
             dados = json.loads(pub.read_text(encoding="utf-8"))
             JOBS[job_id]["status"] = "concluido"
@@ -126,7 +126,7 @@ def postar_video(job_id):
         JOBS[job_id]["status"] = "postando"
         JOBS[job_id]["msg"] = "Enviando pro YouTube..."
 
-        script = Path.home() / "yt" / "enviar_short.py"
+        script = MODULOS / "enviar_short.py"
         if not script.exists():
             JOBS[job_id]["status"] = "erro"
             JOBS[job_id]["msg"] = "enviar_short.py nao encontrado"
@@ -138,7 +138,7 @@ def postar_video(job_id):
         proc = subprocess.run(
             [sys.executable, str(script)],
             capture_output=True, text=True, env=env,
-            cwd=str(Path.home() / "yt"),
+            cwd=str(MODULOS),
         )
 
         saida = (proc.stdout + proc.stderr).lower()
@@ -237,7 +237,7 @@ def historico():
 @app.route("/video/<path:filename>")
 def video(filename):
     # Procura em varias pastas
-    for base in (Path.home() / "yt" / "temp", Path("/sdcard/Download"), TEMP):
+    for base in (MODULOS / "temp", TEMP):
         p = base / filename
         if p.exists():
             return send_file(str(p), mimetype="video/mp4")
