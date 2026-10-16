@@ -508,13 +508,15 @@ def upload():
             img_b64 = b64.b64encode(caminho.read_bytes()).decode("ascii")
 
             prompt = (
-                "Analise esta imagem em portugues BR. Descreva:\n"
-                "1) O que aparece na imagem (pessoas, objetos, cenario)\n"
-                "2) Texto visivel (se tiver)\n"
-                "3) Cores predominantes\n"
-                "4) Emocao/sentimento\n"
-                "5) Qualquer detalhe importante\n\n"
-                "Seja detalhado e util."
+                "Analise esta imagem detalhadamente em portugues BR, com foco especial em pessoas e rostos:\n"
+                "1) Quantas pessoas aparecem? Faixa etaria e genero aparente de cada uma.\n"
+                "2) Descreva CADA ROSTO: expressao facial (sorrindo, serio, surpreso, triste), emocao transmitida, direcao do olhar.\n"
+                "3) Caracteristicas fisicas: cor de pele, cabelo (cor, comprimento, estilo), olhos, barba/bigode.\n"
+                "4) Acessorios: bone, oculos, brinco, corrente, tatuagem.\n"
+                "5) Posicionamento (esquerda/direita/centro) e roupas.\n"
+                "6) Cenario de fundo, objetos relevantes e cores predominantes.\n"
+                "7) Texto visivel (se houver).\n\n"
+                "Seja MUITO detalhado sobre expressoes e caracteristicas faciais. Se reconhecer alguem famoso com certeza (90%+), diga o nome. Nao invente."
             )
 
             modelos = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
