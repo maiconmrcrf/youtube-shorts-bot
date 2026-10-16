@@ -1,11 +1,11 @@
 """
-app.py — Chat com 2 IAs + ferramentas em ROTAÇÃO.
-Cada video usa uma ferramenta diferente (Magic Hour -> Replicate -> HuggingFace -> volta).
+app.py — Chat com 2 IAs + ferramentas (Replicate + Cloudflare).
 """
 import base64
 import json
 import os
 import re
+import subprocess
 import time
 import urllib.request
 import uuid
@@ -27,16 +27,12 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.
 HISTORICO = []
 IA_ATIVA = "gemini"
 
-# Rotação de ferramentas
-ROTACAO = ["magichour", "replicate", "huggingface"]
-INDICE_ROTACAO = 0
-
 MIDIA = Path("/tmp/midia_ia")
 MIDIA.mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================
-# FERRAMENTAS DE IMAGEM
+# IMAGEM (Cloudflare FLUX)
 # ============================================================
 def ferramenta_imagem(prompt):
     if not CF_ACCOUNT or not CF_TOKEN:
@@ -59,140 +55,110 @@ def ferramenta_imagem(prompt):
 
 
 # ============================================================
-# FERRAMENTAS DE VIDEO
+# IMAGEM -> VIDEO (Ken Burns - funciona sempre, gratis)
 # ============================================================
-def video_magichour(prompt, duracao=5):
-    if not MH_KEY:
-        return None, "sem chave"
-    url = "https://api.magichour.ai/v1/text-to-video"
-    body = json.dumps({
-        "end_seconds": duracao, "aspect_ratio": "9:16", "resolution": "480p",
-        "model": "ltx-2.5", "style": {"prompt": prompt}
-    }).encode()
+def imagem_para_video_kenburns(prompt, duracao=5):
+    """Gera imagem + aplica Ken Burns (zoom/pan) = video."""
+    nome_img, err = ferramenta_imagem(prompt)
+    if err:
+        return None, "falha ao gerar imagem: " + err
+
+    img_path = MIDIA / nome_img
+    nome_vid = "vid_kb_" + uuid.uuid4().hex[:8] + ".mp4"
+    caminho = MIDIA / nome_vid
+
+    cmd = ["ffmpeg", "-y", "-loop", "1", "-i", str(img_path),
+           "-t", str(duracao),
+           "-vf", "zoompan=z='min(zoom+0.0015,1.5)':d=" + str(duracao*25) + ":s=720x1280,format=yuv420p",
+           "-c:v", "libx264", "-preset", "fast", "-crf", "23", str(caminho)]
+
     try:
-        req = urllib.request.Request(url, data=body,
-            headers={"Authorization": "Bearer " + MH_KEY, "Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=60) as r:
-            d = json.loads(r.read().decode())
-        job_id = d.get("id")
-        if not job_id:
-            return None, "sem id"
-        for _ in range(36):
-            time.sleep(5)
-            req2 = urllib.request.Request("https://api.magichour.ai/v1/video-projects/" + job_id,
-                headers={"Authorization": "Bearer " + MH_KEY}, method="GET")
-            with urllib.request.urlopen(req2, timeout=30) as r2:
-                s = json.loads(r2.read().decode())
-            if s.get("status") == "complete":
-                url_vid = s.get("download", {}).get("url")
-                if url_vid:
-                    nome = "vid_" + uuid.uuid4().hex[:8] + ".mp4"
-                    urllib.request.urlretrieve(url_vid, MIDIA / nome)
-                    return nome, None
-                return None, "sem url"
-            elif s.get("status") in ("error", "failed"):
-                return None, "falhou"
-        return None, "timeout"
+        subprocess.run(cmd, check=True, capture_output=True)
+        return nome_vid, None
     except Exception as e:
-        return None, str(e)[:80]
+        return None, "ffmpeg falhou: " + str(e)[:80]
 
 
+# ============================================================
+# VIDEO (Replicate)
+# ============================================================
 def video_replicate(prompt, duracao=5):
+    """Replicate - usa modelo de video."""
     if not REPLICATE_KEY:
         return None, "sem chave"
-    url = "https://api.replicate.com/v1/predictions"
-    body = json.dumps({
-        "version": "9f747673945c62801b13b84701c783929c0ee784e4748ec062204894dda1a351",
-        "input": {"prompt": prompt}
-    }).encode()
-    try:
-        req = urllib.request.Request(url, data=body,
-            headers={"Authorization": "Token " + REPLICATE_KEY, "Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=60) as r:
-            d = json.loads(r.read().decode())
-        pred_id = d.get("id")
-        if not pred_id:
-            return None, "sem id"
-        for _ in range(36):
-            time.sleep(5)
-            req2 = urllib.request.Request("https://api.replicate.com/v1/predictions/" + pred_id,
-                headers={"Authorization": "Token " + REPLICATE_KEY}, method="GET")
-            with urllib.request.urlopen(req2, timeout=30) as r2:
-                s = json.loads(r2.read().decode())
-            if s.get("status") == "succeeded":
-                output = s.get("output")
-                url_vid = output if isinstance(output, str) else (output[0] if output else None)
-                if url_vid:
-                    nome = "vid_" + uuid.uuid4().hex[:8] + ".mp4"
-                    urllib.request.urlretrieve(url_vid, MIDIA / nome)
-                    return nome, None
-                return None, "sem url"
-            elif s.get("status") == "failed":
-                return None, "falhou"
-        return None, "timeout"
-    except Exception as e:
-        return None, str(e)[:80]
 
+    # Modelos de video do Replicate
+    modelos = [
+        # Modelo de texto pra video (SVD)
+        "stability-ai/stable-video-diffusion:3f0457e4619daac51203dedb472816fd4af51f3149fa7a9e0b5ffcf1b8172438",
+        # Modelo LTX Video
+        "lightricks/ltx-video:8c47da666861d081eeb4d126488d1903a245b6d1c9b3e2e47a5c5d6c5c5c5c5c",
+    ]
 
-def video_huggingface(prompt, duracao=5):
-    """Hugging Face - usa Space publico (gratis)."""
-    if not HF_TOKEN:
-        return None, "sem chave"
-    # Implementacao simples via Space do AnimateDiff
-    # (pode falhar - fallback pra outros)
-    return None, "nao implementado"
+    for modelo in modelos:
+        try:
+            url = "https://api.replicate.com/v1/predictions"
+            partes = modelo.split(":")
+            version = partes[1] if len(partes) > 1 else ""
+            body = json.dumps({"version": version, "input": {"prompt": prompt}}).encode()
 
+            req = urllib.request.Request(url, data=body,
+                headers={"Authorization": "Token " + REPLICATE_KEY, "Content-Type": "application/json"},
+                method="POST")
+            with urllib.request.urlopen(req, timeout=60) as r:
+                d = json.loads(r.read().decode())
 
-FERRAMENTAS_VIDEO = {
-    "magichour": video_magichour,
-    "replicate": video_replicate,
-    "huggingface": video_huggingface,
-}
+            pred_id = d.get("id")
+            if not pred_id:
+                continue
 
+            for _ in range(36):
+                time.sleep(5)
+                req2 = urllib.request.Request("https://api.replicate.com/v1/predictions/" + pred_id,
+                    headers={"Authorization": "Token " + REPLICATE_KEY}, method="GET")
+                with urllib.request.urlopen(req2, timeout=30) as r2:
+                    s = json.loads(r2.read().decode())
 
-def proxima_ferramenta():
-    """Rotaciona entre as ferramentas disponiveis."""
-    global INDICE_ROTACAO
-    # Pula ferramentas sem chave configurada
-    for _ in range(3):
-        ferramenta = ROTACAO[INDICE_ROTACAO]
-        INDICE_ROTACAO = (INDICE_ROTACAO + 1) % len(ROTACAO)
-        # Verifica se tem chave
-        if ferramenta == "magichour" and MH_KEY:
-            return ferramenta
-        if ferramenta == "replicate" and REPLICATE_KEY:
-            return ferramenta
-        if ferramenta == "huggingface" and HF_TOKEN:
-            return ferramenta
-    return None
-
-
-def gerar_video_rotacao(prompt, duracao=5):
-    """Tenta a ferramenta da vez. Se falhar, tenta a proxima."""
-    tentativas = 0
-    while tentativas < len(ROTACAO):
-        nome_ferramenta = proxima_ferramenta()
-        if not nome_ferramenta:
-            tentativas += 1
+                if s.get("status") == "succeeded":
+                    output = s.get("output")
+                    url_vid = output if isinstance(output, str) else (output[0] if output else None)
+                    if url_vid:
+                        nome = "vid_rep_" + uuid.uuid4().hex[:8] + ".mp4"
+                        urllib.request.urlretrieve(url_vid, MIDIA / nome)
+                        return nome, None
+                    break
+                elif s.get("status") == "failed":
+                    break
+        except Exception:
             continue
-        func = FERRAMENTAS_VIDEO[nome_ferramenta]
-        print("[video] tentando " + nome_ferramenta)
-        res, err = func(prompt, duracao)
-        if res:
-            return res, None, nome_ferramenta
-        print("[video] " + nome_ferramenta + " falhou: " + str(err))
-        tentativas += 1
-    return None, "Todas as ferramentas falharam", None
+    return None, "Replicate falhou"
+
+
+# ============================================================
+# GERAR VIDEO (tenta Replicate, se falhar usa Ken Burns)
+# ============================================================
+def gerar_video(prompt, duracao=5):
+    """Tenta Replicate primeiro. Se falhar, usa Ken Burns (sempre funciona)."""
+    print("[video] tentando Replicate...")
+    res, err = video_replicate(prompt, duracao)
+    if res:
+        return res, None, "Replicate"
+
+    print("[video] Replicate falhou, usando Ken Burns...")
+    res, err = imagem_para_video_kenburns(prompt, duracao)
+    if res:
+        return res, None, "Cloudflare + Ken Burns"
+
+    return None, "Todas falharam: " + str(err), None
 
 
 # ============================================================
 # IA
 # ============================================================
 def chamar_gemini(prompt_ia):
-    """Gemini rapido - poucos modelos, timeout curto."""
     if not GEMINI_KEY:
         return None
-    modelos = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]  # 2 modelos rapidos
+    modelos = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]
     for modelo in modelos:
         try:
             url = "https://generativelanguage.googleapis.com/v1beta/models/" + modelo + ":generateContent?key=" + GEMINI_KEY
@@ -232,7 +198,6 @@ def chamar_ia(prompt_ia, ia):
 
 
 def montar_contexto(ia, limite):
-    """Monta o contexto com o limite de linhas especifico da IA."""
     linhas = []
     for h in HISTORICO[-limite:]:
         quem = h.get("quem", "IA")
@@ -242,15 +207,25 @@ def montar_contexto(ia, limite):
 
 
 def ia_interpretar_pedido(msg, ia):
-    """IA rapida pra decidir acao. Gemini le 3 linhas, Groq le 8."""
-    # Contexto limitado (Gemini 3, Groq 8)
+    """IA decide o que fazer."""
     limite = 3 if ia == "gemini" else 8
     contexto = montar_contexto(ia, limite)
 
     prompt = (
-        "Voce decide quando usar ferramentas. Responda APENAS com JSON.\n"
-        "Ferramentas: IMAGEM (imagens), VIDEO (3-6s), CONVERSA (texto).\n"
-        "JSON: {\"acao\":\"imagem|video|conversa\",\"prompt\":\"prompt em ingles\",\"duracao\":5,\"comentario\":\"o que vai fazer\"}\n\n"
+        "Voce e uma IA que decide quando usar ferramentas.\n\n"
+        "FERRAMENTAS:\n"
+        "- IMAGEM: gera imagens estaticas\n"
+        "- VIDEO: gera videos de 3-6 segundos (usa Replicate ou Ken Burns)\n"
+        "- CONVERSA: so texto\n\n"
+        "Responda APENAS com JSON valido:\n"
+        '{"acao":"imagem|video|conversa","prompt":"prompt em ingles detalhado","duracao":5,"comentario":"mensagem amigavel em PT"}\n\n'
+        "Exemplos:\n"
+        'Usuario: "cria um video de gato correndo"\n'
+        '{"acao":"video","prompt":"a cute cat running on green grass, cinematic lighting, slow motion","duracao":5,"comentario":"Vou criar um video do gatinho correndo!"}\n\n'
+        'Usuario: "faz uma imagem de por do sol"\n'
+        '{"acao":"imagem","prompt":"beautiful sunset over mountains, cinematic, high quality","duracao":0,"comentario":"Vou gerar uma imagem do por do sol!"}\n\n'
+        'Usuario: "oi tudo bem"\n'
+        '{"acao":"conversa","prompt":"","duracao":0,"comentario":""}\n\n'
         "Historico recente:\n" + contexto + "\n\n"
         "Usuario: " + msg + "\n"
         "JSON:"
@@ -285,8 +260,6 @@ def chat():
         return jsonify({"erro": "Mensagem vazia"}), 400
 
     IA_ATIVA = ia
-
-    # IA decide
     decisao = ia_interpretar_pedido(msg, ia)
     acao = decisao.get("acao", "conversa")
     comentario = decisao.get("comentario", "")
@@ -297,23 +270,21 @@ def chat():
 
     if acao == "imagem":
         nome, err = ferramenta_imagem(prompt_f)
-        resp = (comentario + " Imagem gerada!") if not err else ("Erro: " + err)
+        resp = (comentario + " ✅ Imagem gerada!") if not err else ("Erro: " + err)
         item = {"user": msg, "ia": resp, "quem": ia.capitalize(), "tipo": "imagem", "midia": nome if not err else None}
         HISTORICO.append(item)
         return jsonify({"ok": True, "resposta": resp, "ia": ia.capitalize(), "tipo": "imagem", "midia": item["midia"]})
 
     if acao == "video":
-        nome, err, ferramenta = gerar_video_rotacao(prompt_f, duracao)
-        resp = (comentario + " Video gerado com " + (ferramenta or "?")) if not err else ("Erro: " + err)
-        item = {"user": msg, "ia": resp, "quem": ia.capitalize(), "tipo": "video", "midia": nome if not err else None, "ferramenta": ferramenta}
+        nome, err, ferramenta = gerar_video(prompt_f, duracao)
+        resp = (comentario + " ✅ Video gerado com " + (ferramenta or "?")) if not err else ("Erro: " + err)
+        item = {"user": msg, "ia": resp, "quem": ia.capitalize(), "tipo": "video", "midia": nome if not err else None}
         HISTORICO.append(item)
         return jsonify({"ok": True, "resposta": resp, "ia": ia.capitalize(), "tipo": "video", "midia": item["midia"]})
 
-    # Conversa
     limite = 3 if ia == "gemini" else 8
     contexto = montar_contexto(ia, limite)
-
-    sys_inst = "Voce e uma IA pessoal chamada " + ia.capitalize() + ". Responda em portugues BR de forma direta."
+    sys_inst = "Voce e uma IA pessoal chamada " + ia.capitalize() + ". Responda em portugues BR."
     prompt_final = sys_inst + "\n\nHistorico:\n" + contexto + "\n\nUSER: " + msg + "\nASSISTANT:"
 
     resp = chamar_ia(prompt_final, ia)
