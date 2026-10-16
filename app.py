@@ -1,5 +1,6 @@
 """
-app.py — Chat com 2 IAs (Gemini e Groq). Cada uma tem histórico separado.
+app.py — Chat ÚNICO com 2 IAs (Gemini e Groq).
+Trocar de aba NÃO perde a conversa. A nova IA lê o histórico.
 """
 import json
 import os
@@ -8,17 +9,14 @@ from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
 
-# Chaves
 GEMINI_KEY = os.environ.get("GEMINI_KEY_IA", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
 GROQ_KEY   = os.environ.get("GROQ_API_KEY", "").strip()
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
 
-# Históricos separados
-HISTORICOS = {
-    "gemini": [],
-    "groq": [],
-}
+# Histórico ÚNICO (compartilhado entre as IAs)
+HISTORICO = []
+IA_ATIVA = "gemini"  # gemini ou groq
 
 
 # ============================================================
@@ -28,21 +26,29 @@ def chamar_gemini(mensagem):
     if not GEMINI_KEY:
         return None, "sem chave"
 
-    # Monta histórico
     contents = []
-    for h in HISTORICOS["gemini"][-10:]:
+    # Manda as últimas 15 interações pra dar contexto
+    for h in HISTORICO[-15:]:
+        quem = h.get("ia", "Gemini")
         contents.append({"role": "user", "parts": [{"text": h["user"]}]})
-        contents.append({"role": "model", "parts": [{"text": h["ia"]}]})
+        contents.append({"role": "model", "parts": [{"text": f"[{quem}] {h['ia']}"}]})
     contents.append({"role": "user", "parts": [{"text": mensagem}]})
 
-    # Modelos em cascata
+    # Instrução do sistema: avisa que pode ter resposta de outra IA
+    sys_instruction = (
+        "Você é uma IA pessoal amigável chamada Gemini. Responda em português BR.\n"
+        "IMPORTANTE: no histórico abaixo, mensagens marcadas com [Groq] foram "
+        "dadas por OUTRA IA (não por você). Use essas mensagens como contexto "
+        "pra entender o assunto da conversa, mas responda com sua própria opinião."
+    )
+
     modelos = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"]
     for modelo in modelos:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={GEMINI_KEY}"
             body = {
                 "contents": contents,
-                "systemInstruction": {"parts": [{"text": "Voce e uma IA pessoal amigavel. Responda em portugues BR de forma direta e util."}]},
+                "systemInstruction": {"parts": [{"text": sys_instruction}]},
             }
             req = urllib.request.Request(
                 url, data=json.dumps(body).encode(),
@@ -53,7 +59,7 @@ def chamar_gemini(mensagem):
                 d = json.loads(r.read().decode())
             resp = d["candidates"][0]["content"]["parts"][0]["text"]
             return resp, "Gemini"
-        except Exception as e:
+        except Exception:
             continue
     return None, "Gemini falhou"
 
@@ -65,10 +71,19 @@ def chamar_groq(mensagem):
     if not GROQ_KEY:
         return None, "sem chave"
 
-    msgs = [{"role": "system", "content": "Voce e uma IA pessoal amigavel. Responda em portugues BR de forma direta e util."}]
-    for h in HISTORICOS["groq"][-10:]:
+    sys_instruction = (
+        "Você é uma IA pessoal amigável chamada Groq. Responda em português BR.\n"
+        "IMPORTANTE: no histórico abaixo, mensagens marcadas com [Gemini] foram "
+        "dadas por OUTRA IA (não por você). Use essas mensagens como contexto "
+        "pra entender o assunto da conversa, mas responda com sua própria opinião."
+    )
+
+    msgs = [{"role": "system", "content": sys_instruction}]
+    # Manda as últimas 15 interações com a marcação da IA que respondeu
+    for h in HISTORICO[-15:]:
+        quem = h.get("ia", "Groq")
         msgs.append({"role": "user", "content": h["user"]})
-        msgs.append({"role": "assistant", "content": h["ia"]})
+        msgs.append({"role": "assistant", "content": f"[{quem}] {h['ia']}"})
     msgs.append({"role": "user", "content": mensagem})
 
     try:
@@ -101,11 +116,15 @@ def index():
 
 @app.route("/chat", methods=["POST"])
 def chat():
+    global IA_ATIVA
+
     msg = request.form.get("msg", "").strip()
-    ia = request.form.get("ia", "gemini").strip().lower()
+    ia = request.form.get("ia", IA_ATIVA).strip().lower()
 
     if not msg:
         return jsonify({"erro": "Mensagem vazia"}), 400
+
+    IA_ATIVA = ia
 
     if ia == "groq":
         resp, quem = chamar_groq(msg)
@@ -114,25 +133,20 @@ def chat():
         resp, quem = chamar_gemini(msg)
 
     if resp:
-        HISTORICOS[ia].append({"user": msg, "ia": resp})
+        HISTORICO.append({"user": msg, "ia": resp, "quem": quem})
         return jsonify({"ok": True, "resposta": resp, "ia": quem})
     else:
         return jsonify({"erro": f"Nenhuma resposta de {ia}. Verifique a chave."}), 500
 
 
-@app.route("/historico/<ia>")
-def historico(ia):
-    ia = ia.lower()
-    if ia not in HISTORICOS:
-        return jsonify({"erro": "IA invalida"}), 400
-    return jsonify(HISTORICOS[ia])
+@app.route("/historico")
+def historico():
+    return jsonify(HISTORICO)
 
 
-@app.route("/limpar/<ia>", methods=["POST"])
-def limpar(ia):
-    ia = ia.lower()
-    if ia in HISTORICOS:
-        HISTORICOS[ia].clear()
+@app.route("/limpar", methods=["POST"])
+def limpar():
+    HISTORICO.clear()
     return jsonify({"ok": True})
 
 

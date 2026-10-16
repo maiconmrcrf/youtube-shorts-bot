@@ -8,39 +8,35 @@ input.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') enviarMensagem();
 });
 
-// Troca de aba
+// Troca de aba (NÃO recarrega histórico, só muda a cor)
 function trocarAba(ia) {
     iaAtiva = ia;
-
-    // Atualiza botões
     document.querySelectorAll('.aba').forEach(b => {
         b.classList.toggle('ativa', b.dataset.ia === ia);
     });
-
-    // Carrega histórico da IA
-    carregarHistorico();
+    // Foca no input pra continuar digitando
+    input.focus();
 }
 
-// Carrega histórico da IA ativa
+// Carrega histórico do servidor (uma vez só, no início)
 async function carregarHistorico() {
-    chat.innerHTML = '';
-
     try {
-        const resp = await fetch('/historico/' + iaAtiva);
+        const resp = await fetch('/historico');
         const lista = await resp.json();
 
+        chat.innerHTML = '';
+
         if (!lista.length) {
-            const nome = iaAtiva === 'gemini' ? 'Gemini' : 'Groq';
-            adicionarMsg('ia', `Oi! Sou o ${nome}. Como posso ajudar?`);
+            adicionarMsg('ia', 'Oi! Sou sua IA pessoal. Como posso ajudar?', false, 'Gemini');
             return;
         }
 
         lista.forEach(item => {
             adicionarMsg('user', item.user);
-            adicionarMsg('ia', item.ia);
+            adicionarMsg('ia', item.ia, false, item.quem || 'IA');
         });
     } catch (e) {
-        adicionarMsg('ia', '❌ Erro ao carregar histórico');
+        console.error(e);
     }
 }
 
@@ -105,8 +101,8 @@ function adicionarMsg(tipo, texto, temporario = false, ia = null) {
 }
 
 async function limparChat() {
-    if (!confirm('Limpar a conversa do ' + (iaAtiva === 'gemini' ? 'Gemini' : 'Groq') + '?')) return;
-    await fetch('/limpar/' + iaAtiva, {method: 'POST'});
+    if (!confirm('Limpar toda a conversa?')) return;
+    await fetch('/limpar', {method: 'POST'});
     carregarHistorico();
 }
 
