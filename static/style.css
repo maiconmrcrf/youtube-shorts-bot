@@ -1,0 +1,216 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: linear-gradient(135deg, #0f0f1e 0%, #1a1a2e 100%);
+    color: #fff;
+    min-height: 100vh;
+    padding: 20px;
+}
+
+.container {
+    max-width: 700px;
+    margin: 0 auto;
+}
+
+header {
+    text-align: center;
+    padding: 30px 0;
+}
+
+h1 {
+    font-size: 2.2rem;
+    background: linear-gradient(90deg, #ff0080, #ff8c00, #40e0d0);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 8px;
+}
+
+.subtitle {
+    color: #888;
+    font-size: 1rem;
+}
+
+.card {
+    background: rgba(30, 30, 50, 0.7);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.card h2 {
+    font-size: 1.2rem;
+    margin-bottom: 16px;
+    color: #40e0d0;
+}
+
+label {
+    display: block;
+    font-size: 0.95rem;
+    margin-bottom: 8px;
+    color: #ccc;
+}
+
+input[type="url"],
+input[type="datetime-local"] {
+    width: 100%;
+    padding: 14px 16px;
+    font-size: 1rem;
+    background: rgba(0, 0, 0, 0.3);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    color: #fff;
+    margin-bottom: 16px;
+    transition: all 0.3s;
+}
+
+input[type="url"]:focus,
+input[type="datetime-local"]:focus {
+    outline: none;
+    border-color: #40e0d0;
+    box-shadow: 0 0 0 4px rgba(64, 224, 208, 0.15);
+}
+
+.opcoes {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.radio {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    padding: 10px 16px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 10px;
+    border: 2px solid transparent;
+    transition: all 0.3s;
+}
+
+.radio:hover {
+    border-color: rgba(64, 224, 208, 0.5);
+}
+
+.radio input:checked + span {
+    color: #40e0d0;
+    font-weight: 600;
+}
+
+.agendamento {
+    margin-bottom: 20px;
+}
+
+.escondido {
+    display: none !important;
+}
+
+button {
+    width: 100%;
+    padding: 16px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    background: linear-gradient(90deg, #ff0080, #ff8c00);
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 24px rgba(255, 0, 128, 0.4);
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.barra-container {
+    width: 100%;
+    height: 24px;
+    background: rgba(0, 0, 0, 0.4);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 12px;
+}
+
+.barra {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #40e0d0, #ff0080);
+    border-radius: 12px;
+    transition: width 0.4s ease;
+}
+
+#msg-progresso {
+    text-align: center;
+    color: #40e0d0;
+    font-size: 0.95rem;
+}
+
+.item-historico {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 10px;
+    margin-bottom: 8px;
+}
+
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.status-dot.concluido { background: #40e0d0; box-shadow: 0 0 8px #40e0d0; }
+.status-dot.erro { background: #ff4444; box-shadow: 0 0 8px #ff4444; }
+.status-dot.rodando { background: #ff8c00; box-shadow: 0 0 8px #ff8c00; animation: pulse 1s infinite; }
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+.item-historico strong {
+    display: block;
+    font-size: 0.9rem;
+    margin-bottom: 2px;
+}
+
+.item-historico small {
+    color: #666;
+    font-size: 0.75rem;
+}
+
+.vazio {
+    text-align: center;
+    color: #666;
+    padding: 20px;
+}
+
+#resultado p {
+    margin-bottom: 10px;
+    font-size: 0.95rem;
+}
+
+#resultado strong {
+    color: #40e0d0;
+}

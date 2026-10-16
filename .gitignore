@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+token.json
+client_secret.json
+cookies.txt
+temp/
+videos/
+*.mp4
+*.log
+publicacao.json
