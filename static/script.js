@@ -8,22 +8,17 @@ input.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') enviarMensagem();
 });
 
-// Troca de aba (NÃO recarrega histórico, só muda a cor)
 function trocarAba(ia) {
     iaAtiva = ia;
     document.querySelectorAll('.aba').forEach(b => {
         b.classList.toggle('ativa', b.dataset.ia === ia);
     });
-    // Foca no input pra continuar digitando
-    input.focus();
 }
 
-// Carrega histórico do servidor (uma vez só, no início)
 async function carregarHistorico() {
     try {
         const resp = await fetch('/historico');
         const lista = await resp.json();
-
         chat.innerHTML = '';
 
         if (!lista.length) {
@@ -33,7 +28,7 @@ async function carregarHistorico() {
 
         lista.forEach(item => {
             adicionarMsg('user', item.user);
-            adicionarMsg('ia', item.ia, false, item.quem || 'IA');
+            adicionarMsg('ia', item.ia, false, item.quem, item.tipo, item.midia);
         });
     } catch (e) {
         console.error(e);
@@ -63,7 +58,7 @@ async function enviarMensagem() {
         if (dados.erro) {
             adicionarMsg('ia', '❌ Erro: ' + dados.erro);
         } else {
-            adicionarMsg('ia', dados.resposta, false, dados.ia);
+            adicionarMsg('ia', dados.resposta, false, dados.ia, dados.tipo, dados.midia);
         }
     } catch (e) {
         digitando.remove();
@@ -74,7 +69,7 @@ async function enviarMensagem() {
     input.focus();
 }
 
-function adicionarMsg(tipo, texto, temporario = false, ia = null) {
+function adicionarMsg(tipo, texto, temporario = false, ia = null, tipoMidia = null, midia = null) {
     const div = document.createElement('div');
     div.className = 'msg-' + tipo;
     if (temporario) div.classList.add('temporario');
@@ -89,14 +84,39 @@ function adicionarMsg(tipo, texto, temporario = false, ia = null) {
         balao.appendChild(tag);
     }
 
+    // Texto
     const span = document.createElement('span');
     span.innerHTML = texto.replace(/\n/g, '<br>');
     balao.appendChild(span);
 
+    // Midia (imagem ou video)
+    if (midia) {
+        const divMidia = document.createElement('div');
+        divMidia.style.marginTop = '10px';
+
+        if (tipoMidia === 'imagem') {
+            const img = document.createElement('img');
+            img.src = '/midia/' + midia;
+            img.style.maxWidth = '100%';
+            img.style.borderRadius = '10px';
+            img.style.cursor = 'pointer';
+            img.onclick = () => window.open('/midia/' + midia, '_blank');
+            divMidia.appendChild(img);
+        } else if (tipoMidia === 'video') {
+            const vid = document.createElement('video');
+            vid.src = '/midia/' + midia;
+            vid.controls = true;
+            vid.style.maxWidth = '100%';
+            vid.style.borderRadius = '10px';
+            divMidia.appendChild(vid);
+        }
+
+        balao.appendChild(divMidia);
+    }
+
     div.appendChild(balao);
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
-
     return div;
 }
 
@@ -106,5 +126,4 @@ async function limparChat() {
     carregarHistorico();
 }
 
-// Inicia
 carregarHistorico();
