@@ -25,6 +25,10 @@
         <div id="chat-mensagens" class="chat-mensagens"></div>
 
         <div class="chat-input">
+            <input type="file" id="arquivo-input" style="display:none" onchange="enviarArquivo()">
+            <button onclick="document.getElementById('arquivo-input').click()" class="btn-anexar" title="Anexar arquivo">
+                📎
+            </button>
             <input type="text" id="msg-input" placeholder="Digite sua mensagem...">
             <button onclick="enviarMensagem()" id="btn-enviar">➤</button>
         </div>

@@ -11,6 +11,7 @@ import urllib.parse
 import uuid
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_file
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
@@ -471,6 +472,103 @@ def midia(filename):
             return send_file(str(p), mimetype="video/mp4")
         return send_file(str(p))
     return jsonify({"erro": "Nao encontrado"}), 404
+
+
+
+
+# ============================================================
+# UPLOAD DE ARQUIVO
+# ============================================================
+@app.route("/upload", methods=["POST"])
+def upload():
+    if "arquivo" not in request.files:
+        return jsonify({"erro": "Nenhum arquivo enviado"}), 400
+
+    arquivo = request.files["arquivo"]
+    if not arquivo.filename:
+        return jsonify({"erro": "Nome de arquivo vazio"}), 400
+
+    nome_seguro = secure_filename(arquivo.filename)
+    ext = Path(nome_seguro).suffix.lower()
+    nome_unico = uuid.uuid4().hex[:8] + "_" + nome_seguro
+    caminho = MIDIA / nome_unico
+    arquivo.save(str(caminho))
+
+    tamanho = caminho.stat().st_size
+    print("[upload] " + nome_unico + " (" + str(tamanho) + " bytes)")
+
+    # Detecta o tipo e analisa
+    ia = request.form.get("ia", "gemini").lower()
+    descricao = "Arquivo recebido: " + nome_seguro + " (" + str(tamanho) + " bytes)"
+
+    # Se for imagem, tenta analisar com Gemini
+    if ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"] and GEMINI_KEY:
+        try:
+            import base64 as b64
+            img_b64 = b64.b64encode(caminho.read_bytes()).decode("ascii")
+
+            prompt = (
+                "Analise esta imagem em portugues BR. Descreva:\n"
+                "1) O que aparece na imagem (pessoas, objetos, cenario)\n"
+                "2) Texto visivel (se tiver)\n"
+                "3) Cores predominantes\n"
+                "4) Emocao/sentimento\n"
+                "5) Qualquer detalhe importante\n\n"
+                "Seja detalhado e util."
+            )
+
+            modelos = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+            for modelo in modelos:
+                try:
+                    url = "https://generativelanguage.googleapis.com/v1beta/models/" + modelo + ":generateContent?key=" + GEMINI_KEY
+                    body = {"contents": [{"role": "user", "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}}
+                    ]}]}
+                    req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                        headers={"Content-Type": "application/json"}, method="POST")
+                    with urllib.request.urlopen(req, timeout=90) as r:
+                        d = json.loads(r.read().decode())
+                    descricao = d["candidates"][0]["content"]["parts"][0]["text"]
+                    break
+                except Exception as e:
+                    print("[upload img] " + modelo + " falhou: " + str(e)[:80])
+        except Exception as e:
+            descricao = "Imagem salva, mas nao consegui analisar: " + str(e)[:100]
+
+    # Se for PDF, avisa
+    elif ext == ".pdf":
+        descricao = "PDF recebido: " + nome_seguro + ". Tamanho: " + str(round(tamanho/1024, 1)) + " KB. Ainda nao consigo ler PDF completo, mas posso tentar se voce descrever o conteudo."
+
+    # Se for video, avisa
+    elif ext in [".mp4", ".mov", ".avi", ".webm", ".mkv"]:
+        descricao = "Video recebido: " + nome_seguro + ". Tamanho: " + str(round(tamanho/1024/1024, 1)) + " MB. Ainda nao consigo assistir video, mas posso tentar se voce descrever."
+
+    # Se for texto, lê
+    elif ext in [".txt", ".md", ".csv", ".json", ".py", ".js", ".html", ".css"]:
+        try:
+            conteudo = caminho.read_text(encoding="utf-8", errors="ignore")[:2000]
+            descricao = "Arquivo de texto lido:\n\n" + conteudo
+        except Exception:
+            descricao = "Arquivo salvo, mas nao consegui ler."
+
+    item = {
+        "user": "📎 " + nome_seguro,
+        "ia": descricao,
+        "quem": "IA",
+        "tipo": "imagem" if ext in [".jpg", ".jpeg", ".png", ".gif", ".webp"] else "arquivo",
+        "midia": nome_unico if ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".mov"] else None,
+    }
+    HISTORICO.append(item)
+
+    return jsonify({
+        "ok": True,
+        "resposta": descricao,
+        "ia": "IA",
+        "tipo": item["tipo"],
+        "midia": item["midia"],
+        "arquivo": nome_unico,
+    })
 
 
 if __name__ == "__main__":

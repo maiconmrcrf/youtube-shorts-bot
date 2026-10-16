@@ -126,3 +126,42 @@ async function limparChat() {
 }
 
 carregarHistorico();
+
+
+// ============================================================
+// UPLOAD DE ARQUIVO
+// ============================================================
+async function enviarArquivo() {
+    const input = document.getElementById('arquivo-input');
+    const arquivo = input.files[0];
+    if (!arquivo) return;
+
+    // Mostra o nome do arquivo como mensagem do usuário
+    adicionarMsg('user', '📎 ' + arquivo.name);
+    input.value = '';
+
+    const digitando = adicionarMsg('ia', '⏳ Analisando arquivo...', true);
+
+    const formData = new FormData();
+    formData.append('arquivo', arquivo);
+    formData.append('ia', iaAtiva);
+
+    try {
+        const resp = await fetch('/upload', {
+            method: 'POST',
+            body: formData
+        });
+        const dados = await resp.json();
+
+        digitando.remove();
+
+        if (dados.erro) {
+            adicionarMsg('ia', '❌ Erro: ' + dados.erro);
+        } else {
+            adicionarMsg('ia', dados.resposta, false, dados.ia, dados.tipo, dados.midia);
+        }
+    } catch (e) {
+        digitando.remove();
+        adicionarMsg('ia', '❌ Erro: ' + e.message);
+    }
+}
