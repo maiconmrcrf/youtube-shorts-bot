@@ -538,6 +538,51 @@ def upload():
         except Exception as e:
             descricao = "Imagem salva, mas nao consegui analisar: " + str(e)[:100]
 
+    # Se for VIDEO, analisa com Gemini multimodal
+    elif ext in [".mp4", ".mov", ".avi", ".webm", ".mkv", ".m4v"]:
+        try:
+            import base64 as b64
+            tamanho_mb = tamanho / 1024 / 1024
+            print("[upload video] " + nome_seguro + " (" + str(round(tamanho_mb, 1)) + " MB)")
+
+            if tamanho_mb > 20:
+                descricao = "Video muito grande (>20MB). Nao consigo analisar direto. Tente um video menor."
+            else:
+                vid_b64 = b64.b64encode(caminho.read_bytes()).decode("ascii")
+
+                prompt_video = (
+                    "Analise este video em PORTUGUES BRASILEIRO. Gere:\n\n"
+                    "1) QUEM APARECE: descreva rostos/pessoas (se celebridade com 90%+ certeza, diga o nome)\n"
+                    "2) O QUE FAZEM: acao, contexto, cenario\n"
+                    "3) EMOCAO: sentimento do video\n\n"
+                    "4) 5 TITULOS clicaveis (max 60 chars, PT-BR, com #Shorts no final)\n"
+                    "5) DESCRICAO SEO (~150-200 palavras, PT-BR, com pergunta no final)\n"
+                    "6) 15 TAGS separadas por virgula\n"
+                    "7) 10 HASHTAGS com #\n\n"
+                    "Formate organizadamente."
+                )
+
+                modelos_video = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"]
+                for modelo in modelos_video:
+                    try:
+                        url = "https://generativelanguage.googleapis.com/v1beta/models/" + modelo + ":generateContent?key=" + GEMINI_KEY
+                        body = {"contents": [{"role": "user", "parts": [
+                            {"text": prompt_video},
+                            {"inline_data": {"mime_type": "video/mp4", "data": vid_b64}}
+                        ]}]}
+                        req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                            headers={"Content-Type": "application/json"}, method="POST")
+                        with urllib.request.urlopen(req, timeout=300) as r:
+                            d = json.loads(r.read().decode())
+                        descricao = d["candidates"][0]["content"]["parts"][0]["text"]
+                        print("[upload video] " + modelo + " OK")
+                        break
+                    except Exception as e:
+                        print("[upload video] " + modelo + " falhou: " + str(e)[:100])
+                        descricao = "Video recebido mas nao consegui analisar: " + str(e)[:100]
+        except Exception as e:
+            descricao = "Video salvo mas erro na analise: " + str(e)[:100]
+
     # Se for PDF, avisa
     elif ext == ".pdf":
         descricao = "PDF recebido: " + nome_seguro + ". Tamanho: " + str(round(tamanho/1024, 1)) + " KB. Ainda nao consigo ler PDF completo, mas posso tentar se voce descrever o conteudo."
@@ -558,7 +603,7 @@ def upload():
         "user": "📎 " + nome_seguro,
         "ia": descricao,
         "quem": "IA",
-        "tipo": "imagem" if ext in [".jpg", ".jpeg", ".png", ".gif", ".webp"] else "arquivo",
+        "tipo": "video" if ext in [".mp4", ".mov", ".avi", ".webm", ".mkv", ".m4v"] else ("imagem" if ext in [".jpg", ".jpeg", ".png", ".gif", ".webp"] else "arquivo"),
         "midia": nome_unico if ext in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".mov"] else None,
     }
     HISTORICO.append(item)
